@@ -40,6 +40,7 @@ install_deps() {
     libjson-c-dev libpcap-dev libssl-dev \
     libsdl2-dev libsdl2-ttf-dev \
     systemtap-sdt-dev libgtest-dev libgmock-dev \
+    clang llvm \
     git wget ca-certificates
 }
 
