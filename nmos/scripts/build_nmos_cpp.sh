@@ -28,6 +28,7 @@ install_deps() {
     libboost-all-dev libssl-dev \
     libwebsocketpp-dev nlohmann-json3-dev \
     libavahi-client-dev libavahi-common-dev \
+    libavahi-compat-libdnssd-dev \
     libcpprest-dev
 }
 
