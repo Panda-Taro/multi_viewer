@@ -1,0 +1,43 @@
+# mediamtx/mediamtx.yml
+# 対応要件: ④-6
+#
+# WebRTC (WHEP) で /monitor01/ を配信するMediaMTX設定。
+# generate_config.py が WebGUI 設定 (viewer_url, control_nic_ip, bitrate_mbps) に
+# 基づき本ファイルを再生成する。ここではデフォルト値を記載。
+
+logLevel: info
+logDestinations: [stdout, file]
+logFile: /var/log/multiviewer/mediamtx.log
+
+# 制御用1G NICのIPでHTTP APIを待ち受け (WebGUIからの状態取得に使用)
+apiAddress: 127.0.0.1:9997
+api: yes
+
+# WebRTC (WHEP) 配信設定
+webrtc: yes
+webrtcAddress: :8889
+# 1G NIC以外からの到達は想定しない(LAN限定要件)ため、ICE候補は
+# ローカルLANインターフェースに限定する運用を推奨(実機のIPで上書きされる)。
+webrtcAdditionalHosts: []
+webrtcICEServers2: []
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: ""
+webrtcIPsFromInterfaces: yes
+webrtcIPsFromInterfacesList: []
+
+# 認証なし (要件: WebGUI/WebRTCともに認証なし。LAN限定運用)
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+
+paths:
+  monitor01:
+    # compositor (FFmpeg) がローカルRTSPでpushする合成映像+音声の受け口。
+    source: publisher
+    sourceOnDemand: no
