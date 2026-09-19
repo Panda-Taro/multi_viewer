@@ -77,13 +77,22 @@ NMOS (IS-04/IS-05) の **Receiver ロールのみ** をサポートする。
 iPad実機) がこの開発環境には存在しないため、以下のように区分する。
 
 ### 動作確認済み (verified in this environment)
-- Python 側ユニットテスト (bridge の SDP→MTL設定変換, WebGUI の設定バリデーション,
-  表示モード切替ロジック, NMOSリソースモデルのシリアライズ) は `pytest` で実行し合格を確認。
-  実行方法: `cd bridge && python -m pytest`, `cd webgui && python -m pytest`
-- 設定ファイル (MediaMTX yaml, nmos-cpp json, systemd unit) の構文チェック
-  (yaml/json parse) を実施。
-- WebGUIをローカルで起動し (`uvicorn app.main:app`)、`/mgmt/` の各画面が
-  レンダリングされること、REST API (設定取得/更新) が動作することを確認。
+- 全コンポーネントのハードウェア非依存ロジックをpytestで実行し、**112件全て合格**
+  (mtl 16件、compositor 9件、mediamtx 8件、nmos 11件、bridge 24件、webgui 44件)。
+  実行方法: `bash tests/run_all.sh` (または各ディレクトリで `python -m pytest`)。
+  内容: SDP(RFC4175/ST2110-30拡張)パース、IS-05 activate→MTL設定変換、
+  4系統フォーマット不統一アラーム判定、PTP Amber/Blue自動フェイルオーバー
+  状態機械、表示モード(4分割/シングル)切替とzmqコマンド生成、NMOS
+  Receiverリソースモデル(Sender非生成・ID安定性)、IGMPv3 SSM join計画、
+  WebGUI設定バリデーション(保存失敗時のロールバック)、NIC IP変更の
+  確認/自動ロールバック状態機械、ログストア。
+- 設定ファイル (MediaMTX yaml, nmos-cpp json, mtl rx_config json, systemd
+  unit) の構文チェック (yaml/json parse、systemdユニットのセクション存在確認)
+  および全シェルスクリプトの `bash -n` 構文チェックを実施。
+- WebGUIをFastAPI TestClientおよびローカル起動 (`uvicorn app.main:app`) で
+  動作確認: `/mgmt/`, `/mgmt/media`, `/mgmt/system`, `/mgmt/logs`,
+  `/monitor01/` の全画面レンダリング、設定保存API、表示モード切替APIが
+  正常応答することを確認。
 
 ### 実装したが未検証 — 実機検証が必要 (implemented but unverified)
 - MTL による実際の ST2110-20/-30 RX、PTP同期、ST2022-7冗長マージ動作
@@ -118,3 +127,13 @@ NIC IP・Receiver設定・NMOS設定等をGUIから行う (人手によるGUI設
 ## ライセンス・バージョン管理
 
 主要コンポーネントのバージョンは `docs/versions.md` に記載。
+
+## ドキュメント一覧
+
+- `NOTES.md` — 要件定義書に明記されていない実装詳細の判断メモ
+- `docs/versions.md` — コンポーネントバージョン一覧・障害時リカバリ手順
+- `docs/verification.md` — 実機検証手順 (要件⑨の受け入れ基準対応)
+- `mtl/README.md`, `compositor/README.md`, `mediamtx/README.md`,
+  `nmos/README.md`, `bridge/README.md`, `webgui/README.md`,
+  `systemd/README.md` — 各コンポーネントの設計判断・使い方
+- `tests/README.md` — テスト実行方法
