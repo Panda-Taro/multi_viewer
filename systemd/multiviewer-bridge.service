@@ -1,0 +1,19 @@
+[Unit]
+Description=MultiViewer NMOS bridge (IS-05 activate -> MTL RX config + IGMPv3 join)
+Documentation=https://github.com/Panda-Taro/multi_viewer
+After=network-online.target multiviewer-nmos-node.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=MTL_RX_CONFIG=/etc/multiviewer/mtl/rx_config.json
+Environment=MULTIVIEWER_LOG=/var/log/multiviewer/bridge.log
+WorkingDirectory=/opt/multiviewer
+ExecStart=/opt/multiviewer/venv/bin/uvicorn bridge.src.server:app --host 127.0.0.1 --port 8090
+Restart=on-failure
+RestartSec=3
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

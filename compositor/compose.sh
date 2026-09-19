@@ -23,10 +23,14 @@ if ! command -v "${FFMPEG_BIN}" >/dev/null 2>&1; then
   exit 1
 fi
 
-FILTER_COMPLEX=$(py -3 - <<'PYEOF' 2>/dev/null || python3 - <<'PYEOF'
+PYTHON_BIN="python3"
+command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+FILTER_COMPLEX=$(MV_COMPOSITOR_DIR="${SCRIPT_DIR}" "${PYTHON_BIN}" - <<'PYEOF'
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from compositor.layout import DisplayModeController
+sys.path.insert(0, os.environ["MV_COMPOSITOR_DIR"])
+from layout import DisplayModeController
 print(DisplayModeController().build_filter_complex())
 PYEOF
 )

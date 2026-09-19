@@ -1,0 +1,13 @@
+[Unit]
+Description=MultiViewer hugepages setup for DPDK/AF_XDP (MTL)
+Documentation=https://github.com/Panda-Taro/multi_viewer
+Before=multiviewer-mtl-rx.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/multiviewer/mtl/scripts/setup_hugepages.sh
+
+[Install]
+WantedBy=multi-user.target

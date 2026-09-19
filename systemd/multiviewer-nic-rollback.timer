@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically check for overdue MultiViewer NIC IP change confirmations
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+Unit=multiviewer-nic-rollback.service
+
+[Install]
+WantedBy=timers.target

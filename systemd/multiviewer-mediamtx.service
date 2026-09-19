@@ -1,0 +1,16 @@
+[Unit]
+Description=MultiViewer MediaMTX (WebRTC/WHEP delivery)
+Documentation=https://github.com/bluenviron/mediamtx
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=multiviewer
+WorkingDirectory=/opt/multiviewer/mediamtx
+ExecStart=/opt/multiviewer/mediamtx/mediamtx /etc/multiviewer/mediamtx/mediamtx.yml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
