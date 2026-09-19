@@ -31,6 +31,25 @@ install_deps() {
     libcpprest-dev
 }
 
+install_json_schema_validator() {
+  # nlohmann_json_schema_validator (pboettch/json-schema-validator) は
+  # Ubuntu 24.04標準リポジトリに存在しないため、ソースからビルド・インストールする。
+  # nmos-cppのCMakeLists(cmake/NmosCppDependencies.cmake)がfind_packageで要求する。
+  log "nlohmann_json_schema_validator をソースから取得・ビルド"
+  mkdir -p "${BUILD_DIR}"
+  cd "${BUILD_DIR}"
+  if [[ ! -d json-schema-validator ]]; then
+    git clone --depth 1 https://github.com/pboettch/json-schema-validator.git
+  fi
+  cd json-schema-validator
+  mkdir -p build
+  cd build
+  cmake .. -DCMAKE_BUILD_TYPE=Release -DJSON_VALIDATOR_BUILD_TESTS=OFF
+  cmake --build . -j"$(nproc)"
+  cmake --install .
+  ldconfig
+}
+
 fetch_source() {
   mkdir -p "${BUILD_DIR}"
   cd "${BUILD_DIR}"
@@ -69,6 +88,7 @@ build() {
 main() {
   require_root
   install_deps
+  install_json_schema_validator
   fetch_source
   integrate_custom_node_implementation
   build
