@@ -39,6 +39,7 @@ install_deps() {
     libnuma-dev python3-pyelftools python3-pip \
     libjson-c-dev libpcap-dev libssl-dev \
     libsdl2-dev libsdl2-ttf-dev \
+    systemtap-sdt-dev \
     git wget ca-certificates
 }
 
