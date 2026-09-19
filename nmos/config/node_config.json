@@ -1,0 +1,25 @@
+{
+  "_comment": "nmos-cpp Node実行時設定。キー名は nmos-cpp の実際の設定スキーマ (nmos/settings.h 記載のキー) に準拠。実機導入時はnmos-cppバージョンに応じ要確認。",
+  "http_port": 8080,
+  "https_port": 0,
+  "domain": "local.",
+  "label": "MultiViewer",
+  "description": "ST2110 4系統映像+1系統音声モニタリングシステム (Receiverのみ)",
+  "logging_level": 0,
+
+  "discovery_backend": "mdns",
+  "_discovery_backend_comment": "mdns=mDNS/DNS-SD自動発見(_nmos-register._tcp)。staticの場合はregistration_addressを使用 (④-7)",
+
+  "registration_address": "",
+  "registration_port": 0,
+  "_registration_comment": "discovery_backend=staticの場合、RDSの静的IP:ポートをここに指定 (config/registration_static.jsonの例参照)",
+
+  "is04_versions": ["v1.1", "v1.2", "v1.3"],
+  "is05_versions": ["v1.0", "v1.1"],
+
+  "seed_id": "multiviewer-node-0000-0000-000000000001",
+  "pri": 100,
+
+  "allow_invalid_resources": false,
+  "node_api_port_range": "auto"
+}
