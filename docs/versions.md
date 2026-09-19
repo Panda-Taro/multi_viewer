@@ -6,7 +6,7 @@
 |---|---|---|
 | OS | Ubuntu Server 24.04.4 LTS | 固定要件 |
 | Media Transport Library (MTL) | v24.9 系 (タグ追従、`mtl/scripts/build_mtl.sh` 内で明示) | https://github.com/OpenVisualCloud/Media-Transport-Library |
-| DPDK | MTLが要求するバージョン (23.11 系、MTL側READMEに準拠) | https://www.dpdk.org/ |
+| DPDK | MTLが要求するバージョン (25.03系。`mtl/scripts/build_mtl.sh` の `DPDK_VERSION` で管理。**2026-09に23.11→25.03へ変更**: MTL mainブランチの要求上昇により実機ビルドで`libdpdk found: NO ... need '>=25.03'`が発生したため) | https://www.dpdk.org/ |
 | FFmpeg | 7.x (MTL SDK提供のFFmpeg MTLプラグインパッチ適用版) | https://ffmpeg.org/ , MTL同梱パッチ |
 | MediaMTX | v1.9.x | https://github.com/bluenviron/mediamtx |
 | nmos-cpp | main (AMWA NMOS準拠、IS-04 v1.3 / IS-05 v1.1対応コミット) | https://github.com/sony/nmos-cpp |
