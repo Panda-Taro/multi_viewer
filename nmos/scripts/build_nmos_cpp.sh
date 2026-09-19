@@ -51,6 +51,23 @@ install_json_schema_validator() {
   ldconfig
 }
 
+install_jwt_cpp() {
+  # jwt-cpp (Thalhammer/jwt-cpp) はヘッダオンリーライブラリだが、Ubuntu 24.04
+  # 標準リポジトリには存在せず、nmos-cppのCMakeLists(cmake/NmosCppDependencies.cmake)
+  # がfind_package(jwt-cpp)を要求するため、cmake configを含めてインストールする。
+  log "jwt-cpp をソースから取得・インストール(ヘッダオンリー)"
+  mkdir -p "${BUILD_DIR}"
+  cd "${BUILD_DIR}"
+  if [[ ! -d jwt-cpp ]]; then
+    git clone --depth 1 https://github.com/Thalhammer/jwt-cpp.git
+  fi
+  cd jwt-cpp
+  mkdir -p build
+  cd build
+  cmake .. -DCMAKE_BUILD_TYPE=Release -DJWT_BUILD_EXAMPLES=OFF
+  cmake --install .
+}
+
 fetch_source() {
   mkdir -p "${BUILD_DIR}"
   cd "${BUILD_DIR}"
@@ -90,6 +107,7 @@ main() {
   require_root
   install_deps
   install_json_schema_validator
+  install_jwt_cpp
   fetch_source
   integrate_custom_node_implementation
   build
