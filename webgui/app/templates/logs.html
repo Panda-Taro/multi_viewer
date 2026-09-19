@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>ログ</h1>
+<form class="settings-form" method="get" action="/mgmt/logs" style="flex-direction:row; align-items:end; gap:12px;">
+  <div>
+    <label>コンポーネント</label>
+    <input type="text" name="component" value="{{ component }}" placeholder="例: PTP, NMOS, bridge">
+  </div>
+  <div>
+    <label>レベル</label>
+    <input type="text" name="level" value="{{ level }}" placeholder="例: INFO, WARN, ERROR">
+  </div>
+  <button type="submit">絞り込み</button>
+</form>
+<p><a href="/mgmt/logs/export">ログをダウンロード (.log)</a></p>
+<section class="pane" style="max-height: 60vh;">
+  {% for e in entries %}
+  <div class="log-line">{{ e.format_line() }}</div>
+  {% else %}
+  <div class="log-line">ログはまだありません</div>
+  {% endfor %}
+</section>
+{% endblock %}

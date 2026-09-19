@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>ダッシュボード</h1>
+<div class="grid-2">
+  <section class="pane">
+    <h2>映像プレビュー &amp; 表示モード</h2>
+    <div class="video-preview" id="preview">
+      <span>WebRTC (WHEP) プレビュー — 実機起動時に /monitor01/ の映像を縮小表示</span>
+    </div>
+    <button class="mode-toggle-btn" id="toggle-mode-btn" data-mode="{{ display_mode }}">
+      表示モード: <span id="mode-label">{{ '4分割' if display_mode == 'quad' else 'シングル' }}</span> (クリックで切替)
+    </button>
+    {% if format_alarm %}
+    <p class="alert-error">映像フォーマットが4系統で非統一です</p>
+    {% endif %}
+    <p><a href="{{ status.viewer_url }}" target="_blank">視聴用URL: {{ status.viewer_url }}</a></p>
+  </section>
+
+  <section class="pane">
+    <h2>システム状態</h2>
+    <table>
+      <tr><th>CPU使用率</th><td>{{ "%.1f"|format(status.cpu_percent) }} %</td></tr>
+      <tr><th>PTPロック</th><td>{{ "ロック中 (" + status.ptp_source + ")" if status.ptp_locked else "未ロック" }}</td></tr>
+    </table>
+    <h2>NIC帯域</h2>
+    <table>
+      {% for name, mbps in status.nic_bandwidth_mbps.items() %}
+      <tr><th>{{ name }}</th><td>{{ "%.2f"|format(mbps) }} Mbps</td></tr>
+      {% else %}
+      <tr><td colspan="2">NIC情報を取得できませんでした (非Linux環境またはip未インストール)</td></tr>
+      {% endfor %}
+    </table>
+    <h2>Receiver状態</h2>
+    <table>
+      {% for r in status.receivers %}
+      <tr><td><span class="led led-{{ r.led.value }}"></span>{{ r.label }}</td></tr>
+      {% endfor %}
+    </table>
+  </section>
+</div>
+
+<script src="/mgmt/static/js/dashboard.js"></script>
+{% endblock %}
