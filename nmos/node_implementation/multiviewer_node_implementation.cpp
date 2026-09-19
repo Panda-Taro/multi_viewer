@@ -2,155 +2,310 @@
 //
 // 対応要件: ④-7, ⑦ (NMOS Receiverロールのみ、Senderは一切生成しない)
 //
-// これは nmos-cpp (https://github.com/sony/nmos-cpp) の
+// nmos-cpp (https://github.com/sony/nmos-cpp) の
 // `Development/nmos-cpp-node/node_implementation.cpp` を置き換える形で
-// ビルドに組み込む実装である (nmos/scripts/build_nmos_cpp.sh 参照)。
+// ビルドに組み込む実装 (nmos/scripts/build_nmos_cpp.sh 参照)。main.cpp・
+// node_implementation.h はnmos-cpp本体のものをそのまま使うため、本ファイルは
+// node_implementation.h が要求する以下3関数のみを実装する:
+//   - validate_node_implementation_settings
+//   - node_implementation_thread
+//   - make_node_implementation
 //
-// nmos-cppの実際のAPI (nmos::resources, nmos::make_device, nmos::make_source,
-// nmos::make_flow, nmos::make_receiver, nmos::details::make_connection_resource
-// など。詳細は nmos-cpp の nmos/node_resources.h, nmos/connection_resources.h,
-// nmos/node_server.h を参照) に基づき記述しているが、nmos-cppのバージョンにより
-// 関数シグネチャが変わるため、実機ビルド時は組み込み先バージョンのヘッダーと
-// 突き合わせて調整すること (README.md 記載の判断メモ)。
+// 【2026-09 改訂】実機ビルドで判明したAPI不一致 (nmos::get_seed_id /
+// nmos::make_node_resources / nmos::experimental::insert_resource_after /
+// nmos::node_model::connection_activation_handler は現行nmos-cpp(master)には
+// 存在しない) を修正するため、実際にmasterブランチのnmos-cppをclone・精査し、
+// そこで使われている実APIパターン (Development/nmos-cpp-node/
+// node_implementation.cpp のサンプル実装) に合わせて全面的に書き直した。
+// 具体的な参照箇所:
+//   - nmos::make_node / nmos::make_device / nmos::make_receiver /
+//     nmos::make_audio_receiver / nmos::make_connection_rtp_receiver の
+//     シグネチャ
+//   - model.write_lock() 経由でのリソース挿入 (insert_resource + model.notify())
+//   - nmos::connection_activation_handler の実シグネチャは
+//     void(const nmos::resource&, const nmos::resource&) (Receiver本体の
+//     resourceとIS-05 connection resourceの2引数)
+//   - nmos::experimental::node_implementation はデフォルト構築後
+//     .on_xxx(handler) を連鎖するfluent builder (model.connection_activation_handler
+//     のような直接メンバ代入は存在しない)
 //
-// 本ファイルは「実装の試み」として、5つのReceiver (video x4, audio x1) の
-// リソースツリー (device -> source/flow(受信は本来不要だがnmos-cppの
-// リソースモデル上、Receiverにひもづくsource/flowは生成しない。Receiverは
-// Senderと異なりsource/flowを持たないことに注意) と、IS-05
-// activateハンドラのみを実装し、Sender関連のAPI呼び出しは一切行わない。
+// 本実装は要件④-7,⑦の通り、映像Receiver x4 + 音声Receiver x1のみを公開し、
+// Sender/Source/Flowリソースは一切生成しない。ST2022-7 (⑤-2-1) のため全
+// Receiverは常にAmber/Blue 2インターフェース構成とする。
 
-#include <cpprest/json.h>
-#include "nmos/activation_mode.h"
-#include "nmos/api_utils.h"
+#include "node_implementation.h"
+
+#include "cpprest/http_client.h"
+#include "cpprest/json.h"
 #include "nmos/capabilities.h"
+#include "nmos/certificate_handlers.h"
+#include "nmos/clock_name.h"
+#include "nmos/connection_api.h"
 #include "nmos/connection_resources.h"
 #include "nmos/format.h"
-#include "nmos/id.h"
-#include "nmos/is05_versions.h"
+#include "nmos/media_type.h"
 #include "nmos/model.h"
+#include "nmos/node_interfaces.h"
+#include "nmos/node_resource.h"
 #include "nmos/node_resources.h"
 #include "nmos/node_server.h"
 #include "nmos/random.h"
+#include "nmos/slog.h"
 #include "nmos/transport.h"
 
 namespace multiviewer
 {
     // 要件④-1,④-2: 映像Receiver x4 + 音声Receiver x1。Senderは絶対に作らない (⑦)。
-    const int VIDEO_RECEIVER_COUNT = 4;
+    const int video_receiver_count = 4;
 
-    // MultiViewer固有: bridgeサービスへactivate内容を転送するエンドポイント。
-    // bridge/src/server.py が待ち受ける (④-7, bridge連携)。
-    const std::string BRIDGE_ACTIVATE_URL = "http://127.0.0.1:8090/nmos/activate";
+    // bridgeサービス (bridge/src/server.py) のactivate通知先。
+    // 要件④-7: IS-05 activateを受けてMTL RX設定を更新しIGMPv3 joinを行う。
+    const utility::string_t bridge_activate_url = U("http://127.0.0.1:8090/nmos/activate");
 
-    nmos::id make_stable_receiver_id(const std::string& seed_id, int index, bool is_audio)
+    struct node_implementation_init_exception {};
+
+    // 決定論的なリソースID (再起動をまたいでも同じIDを維持する。NMOSコントローラ
+    // 側の継続的な識別のため)。
+    nmos::id make_stable_id(const nmos::id& seed_id, const utility::string_t& path)
     {
-        // 固定シードから決定論的にUUIDを導出し、再起動をまたいでも
-        // 同じReceiver IDが維持されるようにする (NMOSコントローラ側の
-        // 継続的な識別のため)。
-        nmos::details::seeded_generator gen(seed_id + (is_audio ? "-audio-" : "-video-") + std::to_string(index));
-        return nmos::make_repeatable_id(gen, seed_id);
+        return nmos::make_repeatable_id(seed_id, path);
     }
 
-    web::json::value make_video_receiver_resource(const nmos::settings& settings, const nmos::id& device_id, int index)
+    // settingsのhost_addressesで指定されたアドレスに対応するインターフェースを探す
+    // (nmos-cppサンプル node_implementation.cpp の impl::find_interface と同等)。
+    std::vector<web::hosts::experimental::host_interface>::const_iterator find_interface(
+        const std::vector<web::hosts::experimental::host_interface>& interfaces, const utility::string_t& address)
     {
-        using web::json::value;
-
-        const auto id = make_stable_receiver_id(nmos::get_seed_id(settings), index, false);
-        auto receiver = nmos::make_receiver(
-            id,
-            device_id,
-            nmos::transports::rtp_mcast,
-            { nmos::formats::video },
-            { U("video/raw") },   // RFC4175 raw video (ST2110-20)
-            settings
-        );
-
-        receiver[U("label")] = value::string(U("Video Receiver ") + utility::conversions::to_string_t(index + 1));
-        receiver[U("description")] = value::string(U("ST2110-20 video receiver #") + utility::conversions::to_string_t(index + 1));
-
-        // 要件⑥: 受信可能なフォーマット範囲をcapsとして表明する。
-        value caps = value::object();
-        caps[U("media_types")] = value::array(std::vector<value>{ value::string(U("video/raw")) });
-        receiver[U("caps")] = caps;
-
-        return receiver;
-    }
-
-    web::json::value make_audio_receiver_resource(const nmos::settings& settings, const nmos::id& device_id)
-    {
-        using web::json::value;
-
-        const auto id = make_stable_receiver_id(nmos::get_seed_id(settings), 0, true);
-        auto receiver = nmos::make_receiver(
-            id,
-            device_id,
-            nmos::transports::rtp_mcast,
-            { nmos::formats::audio },
-            { U("audio/L24") },   // ST2110-30 PCM
-            settings
-        );
-
-        receiver[U("label")] = value::string(U("Audio Receiver 1 (ch1/2)"));
-        receiver[U("description")] = value::string(U("ST2110-30 audio receiver, channel 1/2 only"));
-
-        value caps = value::object();
-        caps[U("media_types")] = value::array(std::vector<value>{ value::string(U("audio/L24")) });
-        receiver[U("caps")] = caps;
-
-        return receiver;
-    }
-
-    // IS-05 activate (PATCH /connection/receivers/{id}/staged) を受けた際の
-    // ハンドラ。SDPをパースしてbridgeへHTTPで転送し、bridgeがMTL RX設定を
-    // 更新・IGMPv3 joinをトリガーする (④-7, bridge/README.md参照)。
-    // nmos-cppの実際のフックポイントは `nmos::connection_activation_handler`。
-    nmos::connection_activation_handler make_multiviewer_activation_handler(nmos::node_model& model)
-    {
-        return [&model](const nmos::resource& connection_resource)
+        return std::find_if(interfaces.begin(), interfaces.end(), [&](const web::hosts::experimental::host_interface& interface_)
         {
-            const auto& staged = nmos::fields::endpoint_staged(connection_resource.data);
-            const auto receiver_id = connection_resource.id;
-            const auto sdp = web::json::value::null();  // 実装上はstagedからsender SDPを抽出
+            return interface_.addresses.end() != std::find(interface_.addresses.begin(), interface_.addresses.end(), address);
+        });
+    }
 
-            // bridgeへHTTP POSTで通知 (実装はcpprestsdkのhttp_clientを使用)。
-            // ここでは構造のみ示す。実処理は bridge/src/server.py の
-            // /nmos/activate エンドポイントで受ける想定。
-            web::json::value payload = web::json::value::object();
-            payload[U("receiver_id")] = web::json::value::string(receiver_id);
-            payload[U("staged")] = staged;
-
-            // NOTE: 実際の非同期HTTP呼び出しは省略 (統合先nmos-cppの
-            // イベントループ/executorに合わせて実装する必要があるため)。
+    // 要件④-8-4-2-3-2 (各APIの送信元ポート、及びtransport paramsの"auto"解決):
+    // Receiverのinterface_ip(Amber/Blue)のみを解決する。本システムはReceiver
+    // 専用のため、Sender側のsource_ip/destination_ip解決ロジックは持たない。
+    nmos::connection_resource_auto_resolver make_multiviewer_auto_resolver(const nmos::settings&)
+    {
+        using web::json::value;
+        return [](const nmos::resource&, const nmos::resource& connection_resource, value& transport_params)
+        {
+            const auto& constraints = nmos::fields::endpoint_constraints(connection_resource.data);
+            const bool smpte2022_7 = 1 < transport_params.size();
+            nmos::details::resolve_auto(transport_params[0], nmos::fields::interface_ip, [&] { return web::json::front(nmos::fields::constraint_enum(constraints.at(0).at(nmos::fields::interface_ip))); });
+            if (smpte2022_7) nmos::details::resolve_auto(transport_params[1], nmos::fields::interface_ip, [&] { return web::json::back(nmos::fields::constraint_enum(constraints.at(1).at(nmos::fields::interface_ip))); });
+            nmos::resolve_rtp_auto(connection_resource.type, transport_params);
         };
     }
 
-    // node_implementation.cpp が公開すべき init 関数の実体。
-    // nmos-cppのnode_serverはこの関数を呼んで初期リソースを登録する。
-    void node_implementation_init(nmos::node_model& model)
+    // 要件④-7: IS-05 activateを受けてbridgeへ非同期HTTP POSTで転送する。
+    // bridge/src/server.py の /nmos/activate エンドポイントが受け取り、SDP解析・
+    // MTL RX設定更新・IGMPv3 joinを行う (bridge/README.md参照)。
+    // bridgeが未起動でも例外を握りつぶし、NMOS側のactivate応答自体は成功させる
+    // (activate自体の成功可否とbridge反映は疎結合にする設計判断)。
+    nmos::connection_activation_handler make_multiviewer_activation_handler(slog::base_gate& gate)
     {
-        const auto& settings = model.settings;
-        const auto node_id = nmos::make_id();
-        const auto device_id = nmos::make_id();
-
-        auto node_resources = nmos::make_node_resources(node_id, settings);
-        // device: Senderを一切持たない。receiversのみをぶら下げる。
-        auto device = nmos::make_device(device_id, node_id, {}, /*receivers*/ {}, settings);
-
-        std::vector<web::json::value> receivers;
-        for (int i = 0; i < VIDEO_RECEIVER_COUNT; ++i)
+        return [&gate](const nmos::resource& resource, const nmos::resource& connection_resource)
         {
-            receivers.push_back(make_video_receiver_resource(settings, device_id, i));
-        }
-        receivers.push_back(make_audio_receiver_resource(settings, device_id));
+            slog::log<slog::severities::info>(gate, SLOG_FLF) << "Activating " << resource.id;
 
-        // 要件④-7: Senderリソースはコード上、一切生成しない。
-        // (make_sender / nmos::make_sender_resource 等の呼び出しは存在しない)
+            web::json::value payload = web::json::value::object();
+            payload[U("receiver_id")] = web::json::value::string(resource.id);
+            payload[U("active")] = connection_resource.data.at(nmos::fields::endpoint_active);
 
-        for (auto& r : receivers)
-        {
-            nmos::experimental::insert_resource_after(0, model.node_resources, std::move(r));
-        }
-
-        model.connection_activation_handler = make_multiviewer_activation_handler(model);
+            try
+            {
+                auto client = std::make_shared<web::http::client::http_client>(bridge_activate_url);
+                web::http::http_request req(web::http::methods::POST);
+                req.headers().set_content_type(U("application/json"));
+                req.set_body(payload);
+                client->request(req).then([&gate, client](pplx::task<web::http::http_response> task)
+                {
+                    try { task.get(); }
+                    catch (const std::exception& e)
+                    {
+                        slog::log<slog::severities::warning>(gate, SLOG_FLF) << "bridge通知に失敗: " << e.what();
+                    }
+                });
+            }
+            catch (const std::exception& e)
+            {
+                slog::log<slog::severities::warning>(gate, SLOG_FLF) << "bridge通知に失敗: " << e.what();
+            }
+        };
     }
+}
+
+// 要件に独自のnode設定は追加していないため、標準のプロパティ検証のみ行う。
+void validate_node_implementation_settings(const nmos::settings& settings)
+{
+    nmos::validate_node_settings(settings);
+}
+
+// nmos-cppのnode_serverが起動時にバックグラウンドスレッドとして呼び出す。
+// 映像Receiver x4 + 音声Receiver x1をモデルに登録した後、shutdown要求まで待機する
+// (Receiver専用のためIS-12制御プロトコルやイベントシミュレーション等の追加処理は行わない)。
+void node_implementation_thread(nmos::node_model& model, nmos::experimental::control_protocol_state&, slog::base_gate& gate_)
+{
+    nmos::details::omanip_gate gate{ gate_, nmos::stash_category(nmos::category{ "multiviewer_node_implementation" }) };
+
+    try
+    {
+        auto lock = model.write_lock(); // モデル更新にはロックが必要
+
+        const auto seed_id = nmos::experimental::fields::seed_id(model.settings);
+        const auto node_id = multiviewer::make_stable_id(seed_id, U("/node"));
+        const auto device_id = multiviewer::make_stable_id(seed_id, U("/device"));
+
+        const unsigned int delay_millis{ 0 };
+
+        // モデル更新は書き込みロック済み・更新後にmodel.notify()するのが作法
+        // (nmos-cppサンプル node_implementation.cpp の insert_resource_after と同等)。
+        const auto insert_resource_after = [&model, &lock](unsigned int milliseconds, nmos::resources& resources, nmos::resource&& resource, slog::base_gate& gate)
+        {
+            if (nmos::details::wait_for(model.shutdown_condition, lock, bst::chrono::milliseconds(milliseconds), [&] { return model.shutdown; })) return false;
+            const std::pair<nmos::id, nmos::type> id_type{ resource.id, resource.type };
+            const bool success = insert_resource(resources, std::move(resource)).second;
+            if (success)
+                slog::log<slog::severities::info>(gate, SLOG_FLF) << "Updated model with " << id_type;
+            else
+                slog::log<slog::severities::severe>(gate, SLOG_FLF) << "Model update error: " << id_type;
+            model.notify();
+            return success;
+        };
+
+        // 要件⑤-2-1: ST2022-7のため全Receiverは常にAmber/Blue 2インターフェース。
+        // settingsのhost_addresses配列の1番目/2番目をAmber/Blueとして扱う
+        // (WebGUIのシステム設定 (④-8-4-3-1) で設定される想定。判断メモ:
+        // どちらがAmber/Blueかを明示するsettingsキーは要件定義書にないため、
+        // host_addressesの並び順をそのままAmber=primary, Blue=secondaryとした)。
+        const auto host_interfaces = nmos::get_host_interfaces(model.settings);
+        const auto& host_address = nmos::fields::host_address(model.settings);
+        const auto& primary_address = model.settings.has_field(nmos::fields::host_addresses) ? web::json::front(nmos::fields::host_addresses(model.settings)).as_string() : host_address;
+        const auto& secondary_address = model.settings.has_field(nmos::fields::host_addresses) ? web::json::back(nmos::fields::host_addresses(model.settings)).as_string() : host_address;
+        const auto primary_interface_ = multiviewer::find_interface(host_interfaces, primary_address);
+        const auto secondary_interface_ = multiviewer::find_interface(host_interfaces, secondary_address);
+        if (host_interfaces.end() == primary_interface_ || host_interfaces.end() == secondary_interface_)
+        {
+            slog::log<slog::severities::severe>(gate, SLOG_FLF) << "ST2022-7用のAmber/Blueインターフェースがhost_addresses設定と対応しません";
+            throw multiviewer::node_implementation_init_exception();
+        }
+        const auto& primary_interface = *primary_interface_;
+        const auto& secondary_interface = *secondary_interface_;
+        const std::vector<utility::string_t> interface_names{ primary_interface.name, secondary_interface.name };
+        constexpr bool smpte2022_7 = true;
+
+        // node
+        {
+            const auto clocks = web::json::value_of({ nmos::make_internal_clock(nmos::clock_names::clk0) });
+            const auto interfaces = nmos::experimental::node_interfaces(host_interfaces);
+            auto node = nmos::make_node(node_id, clocks, nmos::make_node_interfaces(interfaces), model.settings);
+            if (!insert_resource_after(delay_millis, model.node_resources, std::move(node), gate)) throw multiviewer::node_implementation_init_exception();
+        }
+
+        // 要件④-7,⑦: deviceはSenderを一切持たない。receiver_idsのみ列挙する。
+        std::vector<nmos::id> video_receiver_ids;
+        for (int i = 0; i < multiviewer::video_receiver_count; ++i)
+            video_receiver_ids.push_back(multiviewer::make_stable_id(seed_id, U("/receiver/video/") + utility::conversions::details::to_string_t(i)));
+        const auto audio_receiver_id = multiviewer::make_stable_id(seed_id, U("/receiver/audio/0"));
+
+        std::vector<nmos::id> receiver_ids = video_receiver_ids;
+        receiver_ids.push_back(audio_receiver_id);
+
+        {
+            auto device = nmos::make_device(device_id, node_id, /* senders */ {}, receiver_ids, model.settings);
+            if (!insert_resource_after(delay_millis, model.node_resources, std::move(device), gate)) throw multiviewer::node_implementation_init_exception();
+        }
+
+        const auto resolve_auto = multiviewer::make_multiviewer_auto_resolver(model.settings);
+
+        // 受信側のIS-05 endpoint_constraints (interface_ip) を組み立てる共通処理。
+        const auto set_interface_ip_constraints = [&](nmos::resource& connection_receiver)
+        {
+            connection_receiver.data[nmos::fields::endpoint_constraints][0][nmos::fields::interface_ip] = web::json::value_of({
+                { nmos::fields::constraint_enum, web::json::value_from_elements(primary_interface.addresses) }
+            });
+            connection_receiver.data[nmos::fields::endpoint_constraints][1][nmos::fields::interface_ip] = web::json::value_of({
+                { nmos::fields::constraint_enum, web::json::value_from_elements(secondary_interface.addresses) }
+            });
+        };
+
+        // 要件④-1,⑥: 映像Receiver x4。デフォルト 1920x1080 59.94i 4:2:2 10bit SDR。
+        // 実際のフォーマットはNMOS SDP (IS-05 activate) で上書きされる (④-1-3)。
+        for (int i = 0; i < multiviewer::video_receiver_count; ++i)
+        {
+            const auto& receiver_id = video_receiver_ids[i];
+            const auto video_type = nmos::media_types::video_raw;
+
+            auto receiver = nmos::make_receiver(receiver_id, device_id, nmos::transports::rtp, interface_names, nmos::formats::video, { video_type }, model.settings);
+            receiver.data[U("label")] = web::json::value::string(U("Video Receiver ") + utility::conversions::details::to_string_t(i + 1));
+            receiver.data[U("description")] = web::json::value::string(U("ST2110-20 video receiver #") + utility::conversions::details::to_string_t(i + 1));
+            receiver.data[nmos::fields::caps][nmos::fields::constraint_sets] = web::json::value_of({
+                web::json::value_of({
+                    { nmos::caps::format::frame_width, nmos::make_caps_integer_constraint({ 1920 }) },
+                    { nmos::caps::format::frame_height, nmos::make_caps_integer_constraint({ 1080 }) },
+                    { nmos::caps::format::color_sampling, nmos::make_caps_string_constraint({ U("YCbCr-4:2:2") }) }
+                })
+            });
+
+            auto connection_receiver = nmos::make_connection_rtp_receiver(receiver_id, smpte2022_7);
+            set_interface_ip_constraints(connection_receiver);
+            resolve_auto(receiver, connection_receiver, connection_receiver.data[nmos::fields::endpoint_active][nmos::fields::transport_params]);
+
+            if (!insert_resource_after(delay_millis, model.node_resources, std::move(receiver), gate)) throw multiviewer::node_implementation_init_exception();
+            if (!insert_resource_after(delay_millis, model.connection_resources, std::move(connection_receiver), gate)) throw multiviewer::node_implementation_init_exception();
+        }
+
+        // 要件④-2,⑥: 音声Receiver x1 (ch1/2固定、48kHz、24bit PCM)。
+        {
+            auto receiver = nmos::make_audio_receiver(audio_receiver_id, device_id, nmos::transports::rtp, interface_names, 24u, model.settings);
+            receiver.data[U("label")] = web::json::value::string(U("Audio Receiver 1 (ch1/2)"));
+            receiver.data[U("description")] = web::json::value::string(U("ST2110-30 audio receiver, channel 1/2 only"));
+            receiver.data[nmos::fields::caps][nmos::fields::constraint_sets] = web::json::value_of({
+                web::json::value_of({
+                    { nmos::caps::format::channel_count, nmos::make_caps_integer_constraint({}, 1, 2) },
+                    { nmos::caps::format::sample_rate, nmos::make_caps_rational_constraint({ { 48000, 1 } }) },
+                    { nmos::caps::format::sample_depth, nmos::make_caps_integer_constraint({ 24 }) }
+                })
+            });
+
+            auto connection_receiver = nmos::make_connection_rtp_receiver(audio_receiver_id, smpte2022_7);
+            set_interface_ip_constraints(connection_receiver);
+            resolve_auto(receiver, connection_receiver, connection_receiver.data[nmos::fields::endpoint_active][nmos::fields::transport_params]);
+
+            if (!insert_resource_after(delay_millis, model.node_resources, std::move(receiver), gate)) throw multiviewer::node_implementation_init_exception();
+            if (!insert_resource_after(delay_millis, model.connection_resources, std::move(connection_receiver), gate)) throw multiviewer::node_implementation_init_exception();
+        }
+
+        slog::log<slog::severities::info>(gate, SLOG_FLF) << "MultiViewer NMOS node initialized: 4 video receivers + 1 audio receiver (Sender/Source/Flow are never created)";
+
+        // Receiver専用のため追加のバックグラウンド処理は不要。shutdownまで待機する。
+        model.shutdown_condition.wait(lock, [&model] { return model.shutdown; });
+    }
+    catch (const multiviewer::node_implementation_init_exception&)
+    {
+        // 上でログ済み
+    }
+    catch (const web::json::json_exception& e)
+    {
+        slog::log<slog::severities::error>(gate, SLOG_FLF) << "JSON error: " << e.what();
+    }
+    catch (const std::exception& e)
+    {
+        slog::log<slog::severities::error>(gate, SLOG_FLF) << "Unexpected exception: " << e.what();
+    }
+}
+
+// main.cppがサーバ起動前に呼び出し、node_server (nmos::experimental::node_implementation)
+// に組み込むコールバック一式を構築する。Receiver専用のため、Sender用
+// transportfile設定やIS-12/認可(OAuth)関連のコールバックは登録しない
+// (nmos::experimental::node_implementationのデフォルト(no-op)のまま)。
+nmos::experimental::node_implementation make_node_implementation(nmos::node_model& model, slog::base_gate& gate)
+{
+    return nmos::experimental::node_implementation()
+        .on_load_server_certificates(nmos::make_load_server_certificates_handler(model.settings, gate))
+        .on_load_dh_param(nmos::make_load_dh_param_handler(model.settings, gate))
+        .on_load_ca_certificates(nmos::make_load_ca_certificates_handler(model.settings, gate))
+        .on_resolve_auto(multiviewer::make_multiviewer_auto_resolver(model.settings))
+        .on_connection_activated(multiviewer::make_multiviewer_activation_handler(gate));
 }
