@@ -35,11 +35,11 @@ install_deps() {
   log "依存パッケージをインストール"
   apt-get update -y
   apt-get install -y \
-    build-essential meson ninja-build pkg-config \
+    build-essential meson ninja-build pkg-config cmake \
     libnuma-dev python3-pyelftools python3-pip \
     libjson-c-dev libpcap-dev libssl-dev \
     libsdl2-dev libsdl2-ttf-dev \
-    systemtap-sdt-dev \
+    systemtap-sdt-dev libgtest-dev libgmock-dev \
     git wget ca-certificates
 }
 
