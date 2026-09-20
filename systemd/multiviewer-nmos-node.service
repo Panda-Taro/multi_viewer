@@ -9,7 +9,7 @@ Requires=avahi-daemon.service
 Type=simple
 User=multiviewer
 WorkingDirectory=/opt/multiviewer/build/nmos-cpp
-ExecStart=/opt/multiviewer/build/nmos-cpp/Development/build/nmos-cpp-node/nmos-cpp-node /etc/multiviewer/nmos/node_config.json
+ExecStart=/opt/multiviewer/build/nmos-cpp/Development/build/nmos-cpp-node /etc/multiviewer/nmos/node_config.json
 Restart=on-failure
 RestartSec=3
 
