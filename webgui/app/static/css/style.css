@@ -12,6 +12,7 @@
   --ok: #2ecc71;
   --warn: #f1c40f;
   --error: #e74c3c;
+  --disabled: #6b6f76;
 }
 
 * { box-sizing: border-box; }
@@ -87,7 +88,9 @@ th { color: var(--text-dim); font-weight: normal; }
 .led { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
 .led-ok { background: var(--ok); }
 .led-warn { background: var(--warn); }
-.led-error { background: var(--error); }
+.led-disabled { background: var(--disabled); }
+
+.hint { color: var(--text-dim); font-size: 12px; margin: 0; }
 
 form.settings-form { display: flex; flex-direction: column; gap: 8px; max-width: 480px; }
 form.settings-form label { color: var(--text-dim); font-size: 12px; margin-top: 8px; }
@@ -113,7 +116,8 @@ form.settings-form button {
 .alert-error { background: #3a1f1f; border: 1px solid var(--error); color: #ffb3ab; padding: 10px 14px; border-radius: 4px; margin-bottom: 16px; }
 .alert-notice { background: #1f2f3a; border: 1px solid #3aa0e0; color: #b7dcff; padding: 10px 14px; border-radius: 4px; margin-bottom: 16px; }
 
-.video-preview { background: #000; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; color: var(--text-dim); border-radius: 4px; }
+.video-preview { background: #000; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; color: var(--text-dim); border-radius: 4px; cursor: pointer; text-align: center; }
+.video-preview:focus { outline: 2px solid var(--accent); }
 
 .mode-toggle-btn {
   margin-top: 10px;

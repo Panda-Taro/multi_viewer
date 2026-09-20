@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .routers import dashboard, media, system, logs
+from .routers import dashboard, media, ptp_nmos, system, logs
 from .config_store import store
 from .log_store import log_store
 
@@ -34,6 +34,7 @@ app.mount("/mgmt/static", StaticFiles(directory=str(APP_DIR / "static")), name="
 
 app.include_router(dashboard.router)
 app.include_router(media.router)
+app.include_router(ptp_nmos.router)
 app.include_router(system.router)
 app.include_router(logs.router)
 

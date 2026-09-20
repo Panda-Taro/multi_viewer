@@ -205,3 +205,80 @@ clone・grepして確認の上で修正):
   ため未指定のままとしたが、NMOS SDPでデフォルト以外のフォーマットが
   指定された場合の動的マッピングは未実装(要実装、docs/verification.md
   に追記)。
+
+## 2026-09 WebGUI「4.8 WebGUI」章アップデート対応 + Receiver有効/無効仕様
+
+要件定義書の更新版4.8章と、ユーザーとの協議で確定したReceiver有効/無効の
+補足仕様(WebGUIトグルとIS-05 master_enableの一本化、IGMP Leave、3状態LED)
+を実装した。判断・制約は以下の通り。
+
+### 画面構成の再編
+
+- 「PTP・NMOS設定」を要件④-8-4-3の記載通りメディアストリーム設定
+  (Receiverのみ、④-8-4-2)から独立した専用画面(`/mgmt/ptp-nmos`)に分離した。
+  従来はmedia.html/media.pyに同居していた。
+- 「ログの大きな表示とエクスポート」は要件④-8-4-4-3の記載通りシステム設定
+  画面(`/mgmt/system`)内に埋め込み(直近50件+全ログ/エクスポートへの導線)。
+  独立した`/mgmt/logs`ページ自体はより広い絞り込み検索用に残したが、左ペイン
+  ナビゲーションからは外した(要件のメニュー構成:ダッシュボード/メディア
+  ストリーム設定/PTP・NMOS設定/システム設定の4項目に合わせるため)。
+- ダッシュボードの映像プレビュー領域(`#preview`)自体をクリック可能にし、
+  表示モード切替(要件④-8-4-1-1-1-2「画面クリックで4分割~1つ素材全面の切替」)
+  に対応した。既存の切替ボタンは併存させている(要件は排他を求めていないため)。
+
+### Receiver有効/無効の実装方針
+
+- 内部状態は`mtl/rxctl.py`の`VideoReceiverConfig.enabled`/
+  `AudioReceiverConfig.enabled`に一本化した。WebGUIトグル
+  (`/webgui/receiver-toggle`)とNMOS IS-05 deactivate
+  (`/nmos/deactivate`)はどちらも`bridge/src/translator.py`の
+  `apply_enable_request`/`apply_deactivate_request`を経由し、同一の
+  `RxSystemConfig`を操作する(要件:「同一の実体を操作するものとして扱う」)。
+- 無効化時もソースIP・マルチキャストアドレス・ポート・ペイロードID等は
+  データクラス上に保持したまま、`to_mtl_json()`が`is_active()`
+  (`enabled and is_configured()`)でRxセッションから除外する方式とした。
+  再有効化時はSDPを取得し直さず、保持済みの値でIGMP Joinをやり直す
+  (`apply_enable_request`)。
+- IGMPv3 Leaveは`bridge/src/igmp.py`に`leave_ssm_group()`を追加した。
+  Join時に作成したソケットをbridgeプロセス内メモリ(`_join_sockets`)で
+  保持しておき、無効化時にそのソケット上で`IP_DROP_SOURCE_MEMBERSHIP`を
+  発行してからcloseする。ソケットを保持していない場合(bridge再起動直後等)
+  はベストエフォートでadd即dropする。要件⑥-3-2-3(Join)と対になる動作。
+- ダッシュボードのReceiver LEDは3状態(有効・受信中=緑/有効・信号なし=黄/
+  無効=灰)に再設計した(`webgui/app/status.py`)。無効化のトリガー種別
+  (WebGUI手動 or NMOS操作)はLED上では区別しない(要件通り)。ただしbridgeの
+  ログには`trigger`ラベル("WebGUI"/"NMOS")を残し、運用上の追跡は可能にした。
+- 映像フォーマット(④-8-4-2-1-1-1「SDP or 59i or 59p」)、音声サンプリング/
+  パケットインターバル(④-8-4-2-1-2-1)は、それぞれ`video_format_mode`/
+  `sampling_mode`/`ptime_mode`という「モード」フィールドを追加し、
+  手動固定モード時はSDP適用(`apply_sdp`)で上書きされないようにした
+  (従来は単なる文字列上書きで、手動設定してもNMOSからの次のactivateで
+  常に上書きされてしまう設計だったため、この変更がないと「手動固定」を
+  実現できない)。
+
+### 既知の制約(要実機検証)
+
+- nmos-cpp側(`nmos/node_implementation/multiviewer_node_implementation.cpp`)
+  の活性化ハンドラは、`master_enable=false`(deactivate)の場合のみ新設の
+  `/nmos/deactivate`へreceiver_role付きで通知するよう変更した。
+  `master_enable=true`(activate)の場合は既存のまま`/nmos/activate`へ
+  `receiver_id`+`active`を送るが、**これは元々`bridge/src/server.py`の
+  `ActivateRequest`(`receiver_role`+`sdp`を要求)とスキーマが一致しておらず、
+  実際には常に422で失敗していたと考えられる、本タスク以前からの既存の
+  不整合**。今回のスコープ(Receiver有効/無効)には含まれないため未修正。
+  実際のSender SDP本文をactivateハンドラから取得する経路(IS-05の
+  transport_paramsにSDP全文は含まれないため、別途Sender側のtransport file
+  取得が必要)を含めて別途実装が必要。
+- WebGUIトグル操作時、bridgeの`/webgui/receiver-toggle`は呼ぶが、
+  nmos-cpp自身が保持するIS-05 `active.master_enable`の値そのものを
+  WebGUI側から書き換える経路(通常のNMOSコントローラと同じくIS-05
+  Connection APIのstaged PATCH+activateをローカルhttp_clientで叩く)は
+  未実装。現状はbridge側の内部状態(`RxSystemConfig.enabled`)とMTL Rx
+  セッション制御・IGMP Join/Leaveは正しく連動するが、外部NMOSコントローラが
+  IS-05 `/active`を読んだ際にWebGUIトグルの結果が反映されない可能性がある
+  (「IS-05の`master_enable`もfalseになる」という補足仕様の一部が未達)。
+  nmos-cppのreceiver_role_by_idマップをこの用途にも転用できるため、
+  次段の実装候補として残す。
+- C++側の変更(`multiviewer_node_implementation.cpp`)は、本サンドボックス
+  ではnmos-cpp実体をビルドできないため(DPDK/AF_XDP同様、既存のNOTES.md
+  記載の制約と同じ)コンパイル未検証。実機ビルドでの確認が必要。

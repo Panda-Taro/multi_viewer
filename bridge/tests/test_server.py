@@ -66,4 +66,46 @@ def test_state_endpoint_reflects_activation():
     r = client.get("/state")
     assert r.status_code == 200
     sessions = r.json()["rx_sessions"]
-    assert any("239.1.1.12" in s["dip"] for s in sessions)
+    assert any("239.1.1.12" in s["ip"] for s in sessions)
+
+
+def test_webgui_toggle_disable_then_enable_video_receiver():
+    """④-8-4-2-1補足仕様: WebGUIトグルで無効化→再有効化しても保持済み設定で
+    IGMP Joinがやり直される(SDP再取得なし)。"""
+    client.post(
+        "/nmos/activate",
+        json={"receiver_role": "video-receiver-4", "sdp": VIDEO_SDP.replace("20000", "20003").replace("239.1.1.10", "239.1.1.14")},
+    )
+
+    r = client.post(
+        "/webgui/receiver-toggle",
+        json={"receiver_role": "video-receiver-4", "enabled": False},
+    )
+    assert r.status_code == 200
+    assert r.json()["enabled"] is False
+
+    state_after_disable = client.get("/state").json()["rx_sessions"]
+    assert all("239.1.1.14" not in s["ip"] for s in state_after_disable)
+
+    r = client.post(
+        "/webgui/receiver-toggle",
+        json={"receiver_role": "video-receiver-4", "enabled": True},
+    )
+    assert r.status_code == 200
+    assert r.json()["enabled"] is True
+
+    state_after_enable = client.get("/state").json()["rx_sessions"]
+    assert any("239.1.1.14" in s["ip"] for s in state_after_enable)
+
+
+def test_nmos_deactivate_endpoint_disables_receiver():
+    client.post(
+        "/nmos/activate",
+        json={"receiver_role": "audio-receiver-1", "sdp": VIDEO_SDP.replace("m=video", "m=audio").replace("112", "111").replace("raw/90000", "L24/48000/2")},
+    )
+    r = client.post(
+        "/nmos/deactivate",
+        json={"receiver_role": "audio-receiver-1", "enabled": False},
+    )
+    assert r.status_code == 200
+    assert r.json()["enabled"] is False

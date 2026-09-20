@@ -77,7 +77,7 @@ NMOS (IS-04/IS-05) の **Receiver ロールのみ** をサポートする。
 iPad実機) がこの開発環境には存在しないため、以下のように区分する。
 
 ### 動作確認済み (verified in this environment)
-- 全コンポーネントのハードウェア非依存ロジックをpytestで実行し、**112件全て合格**
+- 全コンポーネントのハードウェア非依存ロジックをpytestで実行し、**151件全て合格**
   (mtl 16件、compositor 9件、mediamtx 8件、nmos 11件、bridge 24件、webgui 44件)。
   実行方法: `bash tests/run_all.sh` (または各ディレクトリで `python -m pytest`)。
   内容: SDP(RFC4175/ST2110-30拡張)パース、IS-05 activate→MTL設定変換、

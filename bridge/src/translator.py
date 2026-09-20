@@ -98,3 +98,45 @@ def apply_activate_request(
 
     alarm = config.check_format_uniformity() if kind == RECEIVER_KIND_VIDEO else None
     return config, join_requests, alarm
+
+
+def apply_deactivate_request(
+    config: RxSystemConfig, receiver_role: str
+) -> tuple[RxSystemConfig, IgmpJoinRequest]:
+    """④-8-4-2-1補足仕様: Receiver無効化(WebGUI手動トグル、またはIS-05
+    activate要求のmaster_enable=false)を適用する。
+
+    ソースIP・マルチキャストアドレス・ポート・ペイロードID等の設定値は変更せず
+    保持したまま`enabled`のみFalseにする。戻り値のIgmpJoinRequestは、無効化前の
+    (保持されている)マルチキャストグループ/送信元IPを元にした
+    IGMPv3 Leave対象であり、呼び出し元(server.py)がigmp.plan_leaves()に渡す。
+    """
+    kind, index = receiver_kind_and_index(receiver_role)
+    target = config.receiver_by_kind(kind, index)
+    leave_request = IgmpJoinRequest(
+        multicast_group=target.multicast_group_amber,
+        source_ip=target.source_ip,
+    )
+    config.set_enabled(kind, index, False)
+    return config, leave_request
+
+
+def apply_enable_request(
+    config: RxSystemConfig, receiver_role: str
+) -> tuple[RxSystemConfig, IgmpJoinRequest]:
+    """④-8-4-2-1補足仕様: Receiver再有効化(WebGUI手動トグル、またはIS-05
+    activate要求のmaster_enable=true)。
+
+    補足仕様により、再有効化時はNMOSから再度SDPを取得し直さず、保持済みの
+    設定値(ソースIP・マルチキャストアドレス・ポート等)でIGMP Joinをし直す。
+    新しいSDPが伴うNMOS activateは apply_activate_request() 側で処理される
+    (そちらは内部で target.enabled = True を設定する)。
+    """
+    kind, index = receiver_kind_and_index(receiver_role)
+    target = config.receiver_by_kind(kind, index)
+    config.set_enabled(kind, index, True)
+    join_request = IgmpJoinRequest(
+        multicast_group=target.multicast_group_amber,
+        source_ip=target.source_ip,
+    )
+    return config, join_request

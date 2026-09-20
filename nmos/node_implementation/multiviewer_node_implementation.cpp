@@ -35,6 +35,7 @@
 
 #include "node_implementation.h"
 
+#include <map>
 #include "cpprest/host_utils.h" // for web::hosts::experimental::host_interface (full definition; nmos/settings.h etc. only forward-declare it)
 #include "cpprest/http_client.h"
 #include "cpprest/json.h"
@@ -76,9 +77,21 @@ namespace multiviewer
     // 要件④-1,④-2: 映像Receiver x4 + 音声Receiver x1。Senderは絶対に作らない (⑦)。
     const int video_receiver_count = 4;
 
-    // bridgeサービス (bridge/src/server.py) のactivate通知先。
+    // bridgeサービス (bridge/src/server.py) の通知先。
     // 要件④-7: IS-05 activateを受けてMTL RX設定を更新しIGMPv3 joinを行う。
     const utility::string_t bridge_activate_url = U("http://127.0.0.1:8090/nmos/activate");
+    // 要件④-8-4-2-1補足仕様: IS-05 deactivate (staged/active master_enable=false
+    // をactivate) を受けて、MTL Rxセッション停止+IGMPv3 leaveを行う。
+    const utility::string_t bridge_deactivate_url = U("http://127.0.0.1:8090/nmos/deactivate");
+
+    // receiver resource id (UUID) -> bridge向けラベル ("video-receiver-1" 等)。
+    // bridge/src/translator.py の receiver_kind_and_index() が期待する形式に
+    // 合わせる。node_implementation_thread()内でReceiver生成時に登録し、
+    // 活性化ハンドラ(make_multiviewer_activation_handler)から参照する。
+    // 単一プロセス内で書き込み(起動時1回)と読み取り(activate/deactivateの都度)
+    // が競合しないよう、書き込みはnode_implementation_thread()の初期化フェーズ
+    // (model.write_lock()保持中、他スレッドはまだactivateを起こせない)に限定する。
+    std::map<nmos::id, utility::string_t> receiver_role_by_id;
 
     struct node_implementation_init_exception {};
 
@@ -121,15 +134,65 @@ namespace multiviewer
     // MTL RX設定更新・IGMPv3 joinを行う (bridge/README.md参照)。
     // bridgeが未起動でも例外を握りつぶし、NMOS側のactivate応答自体は成功させる
     // (activate自体の成功可否とbridge反映は疎結合にする設計判断)。
+    //
+    // 要件④-8-4-2-1補足仕様(2026-09追加): active.master_enable が false の
+    // 場合は「activate」ではなく「deactivate」であるため、SDP解析を必要としない
+    // bridge の /nmos/deactivate エンドポイントへ転送する。WebGUI手動トグルの
+    // 通知先(/webgui/receiver-toggle)と同じ内部ロジック
+    // (translator.apply_deactivate_request)を通ることで、WebGUIトグルと
+    // IS-05のmaster_enableが同一の内部状態を指すようにする。
     nmos::connection_activation_handler make_multiviewer_activation_handler(slog::base_gate& gate)
     {
         return [&gate](const nmos::resource& resource, const nmos::resource& connection_resource)
         {
+            const auto& active = connection_resource.data.at(nmos::fields::endpoint_active);
+            const bool master_enable = active.has_field(nmos::fields::master_enable)
+                ? nmos::fields::master_enable(active)
+                : false;
+
+            if (!master_enable)
+            {
+                const auto role_it = receiver_role_by_id.find(resource.id);
+                if (receiver_role_by_id.end() == role_it)
+                {
+                    slog::log<slog::severities::warning>(gate, SLOG_FLF) << "Deactivating unknown receiver " << resource.id;
+                    return;
+                }
+                const auto& receiver_role = role_it->second;
+
+                slog::log<slog::severities::info>(gate, SLOG_FLF) << "Deactivating " << resource.id << " (role=" << receiver_role << ")";
+
+                web::json::value payload = web::json::value::object();
+                payload[U("receiver_role")] = web::json::value::string(receiver_role);
+                payload[U("enabled")] = web::json::value::boolean(false);
+
+                try
+                {
+                    auto client = std::make_shared<web::http::client::http_client>(bridge_deactivate_url);
+                    web::http::http_request req(web::http::methods::POST);
+                    req.headers().set_content_type(U("application/json"));
+                    req.set_body(payload);
+                    client->request(req).then([&gate, client](pplx::task<web::http::http_response> task)
+                    {
+                        try { task.get(); }
+                        catch (const std::exception& e)
+                        {
+                            slog::log<slog::severities::warning>(gate, SLOG_FLF) << "bridge通知に失敗: " << e.what();
+                        }
+                    });
+                }
+                catch (const std::exception& e)
+                {
+                    slog::log<slog::severities::warning>(gate, SLOG_FLF) << "bridge通知に失敗: " << e.what();
+                }
+                return;
+            }
+
             slog::log<slog::severities::info>(gate, SLOG_FLF) << "Activating " << resource.id;
 
             web::json::value payload = web::json::value::object();
             payload[U("receiver_id")] = web::json::value::string(resource.id);
-            payload[U("active")] = connection_resource.data.at(nmos::fields::endpoint_active);
+            payload[U("active")] = active;
 
             try
             {
@@ -253,6 +316,10 @@ void node_implementation_thread(nmos::node_model& model, nmos::experimental::con
         for (int i = 0; i < multiviewer::video_receiver_count; ++i)
         {
             const auto& receiver_id = video_receiver_ids[i];
+            // 要件④-8-4-2-1補足仕様: bridgeがreceiver_role文字列で参照するための
+            // id->role対応表 (bridge/src/translator.pyのreceiver_kind_and_index()
+            // が期待する"video-receiver-<1始まり>"形式に合わせる)。
+            multiviewer::receiver_role_by_id[receiver_id] = U("video-receiver-") + utility::conversions::details::to_string_t(i + 1);
             const auto video_type = nmos::media_types::video_raw;
 
             auto receiver = nmos::make_receiver(receiver_id, device_id, nmos::transports::rtp, interface_names, nmos::formats::video, { video_type }, model.settings);
@@ -276,6 +343,7 @@ void node_implementation_thread(nmos::node_model& model, nmos::experimental::con
 
         // 要件④-2,⑥: 音声Receiver x1 (ch1/2固定、48kHz、24bit PCM)。
         {
+            multiviewer::receiver_role_by_id[audio_receiver_id] = U("audio-receiver-1");
             auto receiver = nmos::make_audio_receiver(audio_receiver_id, device_id, nmos::transports::rtp, interface_names, 24u, model.settings);
             receiver.data[U("label")] = web::json::value::string(U("Audio Receiver 1 (ch1/2)"));
             receiver.data[U("description")] = web::json::value::string(U("ST2110-30 audio receiver, channel 1/2 only"));

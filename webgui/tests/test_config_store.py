@@ -105,3 +105,50 @@ def test_nic_settings_requires_cidr():
     bad = NicSettings(amber_ip_cidr="not-cidr")
     with pytest.raises(ConfigValidationError):
         store.update_nic(bad)
+
+
+def test_set_receiver_enabled_false_keeps_settings():
+    store = ConfigStore()
+    store.update_video_receiver(0, multicast_group_amber="239.1.1.10", port=20000)
+    store.set_receiver_enabled("video", 0, False)
+    assert store.media.videos[0].enabled is False
+    assert store.media.videos[0].multicast_group_amber == "239.1.1.10"  # 設定値は保持
+
+
+def test_set_receiver_enabled_true_restores_mtl_session():
+    store = ConfigStore()
+    store.update_video_receiver(0, multicast_group_amber="239.1.1.10", port=20000)
+    store.set_receiver_enabled("video", 0, False)
+    store.set_receiver_enabled("video", 0, True)
+    assert any(s["ip"][0] == "239.1.1.10" for s in store.media.to_mtl_json()["rx_sessions"])
+
+
+def test_update_video_receiver_rejects_unknown_format_mode():
+    store = ConfigStore()
+    with pytest.raises(ConfigValidationError):
+        store.update_video_receiver(0, video_format_mode="not-a-mode")
+
+
+def test_update_video_receiver_59i_mode_fixes_format_regardless_of_manual_text():
+    store = ConfigStore()
+    store.update_video_receiver(0, video_format_mode="59i")
+    assert store.media.videos[0].video_format == "i1080p59"
+    assert store.media.videos[0].pg_format == "YUV_422_10bit"
+
+
+def test_update_video_receiver_59p_mode():
+    store = ConfigStore()
+    store.update_video_receiver(0, video_format_mode="59p")
+    assert store.media.videos[0].video_format == "p1080p59"
+
+
+def test_update_audio_receiver_rejects_unknown_sampling_mode():
+    store = ConfigStore()
+    with pytest.raises(ConfigValidationError):
+        store.update_audio_receiver(sampling_mode="not-a-mode")
+
+
+def test_update_audio_receiver_ptime_mode_0125ms():
+    store = ConfigStore()
+    store.update_audio_receiver(ptime_mode="0.125ms")
+    assert store.media.audio.packet_time_ms == 0.125

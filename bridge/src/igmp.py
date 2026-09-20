@@ -64,6 +64,10 @@ def join_ssm_group(plan: SsmJoinPlan) -> socket.socket:
     struct ip_mreq_source に対応)。本開発環境 (Windows) では該当ソケット
     オプションが存在しないため、呼び出し元がOSを判定して実機(Linux)でのみ
     利用すること。
+
+    戻り値のソケットは、後でLeaveを発行するため呼び出し元(server.py)が
+    保持し続けること (④-8-4-2-1の補足仕様: Receiver無効化時にIGMPv3 Leaveを
+    送出するには、対応するJoin済みソケットが必要)。
     """
     IP_ADD_SOURCE_MEMBERSHIP = 39  # Linux <netinet/in.h> の値
 
@@ -82,3 +86,47 @@ def join_ssm_group(plan: SsmJoinPlan) -> socket.socket:
             f"IGMPv3 SSM joinに失敗しました (interface={plan.interface_name}): {e}"
         ) from e
     return sock
+
+
+# Leave対象の決定ロジックはJoinと同一 (Amber/Blue両系統) であるため plan_joins()
+# をそのまま再利用する。呼び出し元での可読性のためのエイリアス。
+plan_leaves = plan_joins
+
+
+def leave_ssm_group(plan: SsmJoinPlan, sock: socket.socket | None = None) -> None:
+    """④-8-4-2-1の補足仕様: Receiver無効化時にIGMPv3 Leaveを送出する (実機でのみ動作)。
+
+    `sock` にjoin_ssm_group()が返したソケットを渡した場合は、そのソケット上で
+    明示的に `IP_DROP_SOURCE_MEMBERSHIP` を発行した後にcloseする(Linuxでは
+    ソケットcloseだけでもメンバーシップは自動的に外れるが、要件が「IGMPv3 Leave
+    メッセージを送出する」と明記しているため、close任せにせず明示的なdropを
+    発行する)。`sock` を渡さない場合(bridge再起動直後などJoin時のソケットを
+    保持していない場合)は、新規ソケットでadd即dropしてLeaveメッセージのみを
+    送出する。
+    """
+    IP_DROP_SOURCE_MEMBERSHIP = 40  # Linux <netinet/in.h> の値
+    IP_ADD_SOURCE_MEMBERSHIP = 39
+
+    mreq_source = struct.pack(
+        "4s4s4s",
+        socket.inet_aton(plan.group),
+        socket.inet_aton(plan.source),
+        socket.inet_aton(plan.interface_ip),
+    )
+
+    owns_socket = sock is None
+    if sock is None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.setsockopt(socket.IPPROTO_IP, IP_ADD_SOURCE_MEMBERSHIP, mreq_source)
+        except OSError:
+            pass  # 既にJoinしていない状態でのLeaveはベストエフォートで許容する
+
+    try:
+        sock.setsockopt(socket.IPPROTO_IP, IP_DROP_SOURCE_MEMBERSHIP, mreq_source)
+    except OSError as e:
+        raise IgmpError(
+            f"IGMPv3 SSM leaveに失敗しました (interface={plan.interface_name}): {e}"
+        ) from e
+    finally:
+        sock.close()

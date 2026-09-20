@@ -62,13 +62,13 @@ def test_media_video_update_then_reflected_on_page():
     r = client.post(
         "/mgmt/media/video/0",
         data={
+            "enabled": "true",
             "source_ip": "192.168.1.10",
             "multicast_group_amber": "239.1.1.10",
             "multicast_group_blue": "",
             "port": "20000",
             "payload_type": "112",
-            "video_format": "i1080p59",
-            "pg_format": "YUV_422_10bit",
+            "video_format_mode": "sdp",
         },
         follow_redirects=False,
     )
@@ -77,8 +77,49 @@ def test_media_video_update_then_reflected_on_page():
     assert "239.1.1.10" in page.text
 
 
-def test_media_ptp_update_invalid_shows_error_and_keeps_previous():
-    r = client.post("/mgmt/media/ptp", data={"domain": "999"}, follow_redirects=False)
+def test_media_video_disable_toggle_shows_unchecked_and_excludes_session():
+    client.post(
+        "/mgmt/media/video/1",
+        data={
+            "enabled": "true",
+            "multicast_group_amber": "239.1.1.11",
+            "port": "20001",
+            "video_format_mode": "sdp",
+        },
+        follow_redirects=False,
+    )
+    r = client.post(
+        "/mgmt/media/video/1",
+        data={
+            # enabled チェックボックス未送信 = 無効化
+            "multicast_group_amber": "239.1.1.11",
+            "port": "20001",
+            "video_format_mode": "sdp",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+
+
+def test_media_video_59i_mode_shows_fixed_format():
+    r = client.post(
+        "/mgmt/media/video/2",
+        data={"video_format_mode": "59i"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    page = client.get("/mgmt/media")
+    assert "i1080p59" in page.text
+
+
+def test_ptp_nmos_page_renders():
+    r = client.get("/mgmt/ptp-nmos")
+    assert r.status_code == 200
+    assert "PTP・NMOS設定" in r.text
+
+
+def test_ptp_update_invalid_shows_error_and_keeps_previous():
+    r = client.post("/mgmt/ptp-nmos/ptp", data={"domain": "999"}, follow_redirects=False)
     assert r.status_code == 303
     assert "error=" in r.headers["location"]
 

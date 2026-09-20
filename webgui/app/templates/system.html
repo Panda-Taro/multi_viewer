@@ -50,4 +50,14 @@
   <input type="number" name="bitrate_mbps" min="10" max="50" value="{{ viewer.bitrate_mbps }}">
   <button type="submit">保存</button>
 </form>
+
+<h2>ログ</h2>
+<p><a href="/mgmt/logs">全ログを表示(絞り込み検索)</a> | <a href="/mgmt/logs/export">ログをダウンロード (.log)</a></p>
+<section class="pane" style="max-height: 40vh;">
+  {% for e in recent_log_entries %}
+  <div class="log-line">{{ e.format_line() }}</div>
+  {% else %}
+  <div class="log-line">ログはまだありません</div>
+  {% endfor %}
+</section>
 {% endblock %}

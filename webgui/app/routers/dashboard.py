@@ -29,6 +29,7 @@ def _collect_status():
         receiver_activity.append(
             {
                 "label": f"Video Receiver {i + 1}",
+                "enabled": v.enabled,
                 "amber_active": bool(v.multicast_group_amber),
                 "blue_active": bool(v.multicast_group_blue),
                 "configured": v.is_configured(),
@@ -37,6 +38,7 @@ def _collect_status():
     receiver_activity.append(
         {
             "label": "Audio Receiver 1",
+            "enabled": store.media.audio.enabled,
             "amber_active": bool(store.media.audio.multicast_group_amber),
             "blue_active": bool(store.media.audio.multicast_group_blue),
             "configured": store.media.audio.is_configured(),

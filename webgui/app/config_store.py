@@ -19,7 +19,13 @@ from typing import Optional
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "mtl"))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "mediamtx"))
 
-from rxctl import RxSystemConfig, ConfigValidationError as RxCtlValidationError  # noqa: E402
+from rxctl import (  # noqa: E402
+    RxSystemConfig,
+    ConfigValidationError as RxCtlValidationError,
+    VIDEO_FORMAT_MODES,
+    AUDIO_SAMPLING_MODES,
+    AUDIO_PTIME_MODES,
+)
 from generate_config import ViewerSettings, MediaMtxConfigError  # noqa: E402
 
 
@@ -133,9 +139,12 @@ class ConfigStore:
                 raise ConfigValidationError(f"不明な映像Receiverフィールド: {key}")
             setattr(target, key, value)
 
+        if target.video_format_mode not in VIDEO_FORMAT_MODES:
+            raise ConfigValidationError(f"不明な映像フォーマットモード: {target.video_format_mode}")
         if target.port and not (0 < target.port < 65536):
             raise ConfigValidationError(f"portは1-65535の範囲でなければならない: {target.port}")
 
+        target.apply_format_mode()
         self._media = working_copy
         return self._media.check_format_uniformity()
 
@@ -146,8 +155,23 @@ class ConfigStore:
             if not hasattr(target, key):
                 raise ConfigValidationError(f"不明な音声Receiverフィールド: {key}")
             setattr(target, key, value)
+
+        if target.sampling_mode not in AUDIO_SAMPLING_MODES:
+            raise ConfigValidationError(f"不明な音声サンプリングモード: {target.sampling_mode}")
+        if target.ptime_mode not in AUDIO_PTIME_MODES:
+            raise ConfigValidationError(f"不明なパケットインターバルモード: {target.ptime_mode}")
         if target.port and not (0 < target.port < 65536):
             raise ConfigValidationError(f"portは1-65535の範囲でなければならない: {target.port}")
+
+        target.apply_format_mode()
+        self._media = working_copy
+
+    def set_receiver_enabled(self, receiver_kind: str, index: int, enabled: bool) -> None:
+        """④-8-4-2-1補足仕様: WebGUIトグル操作。IS-05側との同期はルータ層
+        (webgui/app/routers/media.py)がbridgeの`/webgui/receiver-toggle`を
+        呼び出すことで行う。"""
+        working_copy = copy.deepcopy(self._media)
+        working_copy.set_enabled(receiver_kind, index, enabled)
         self._media = working_copy
 
     def update_ptp_domain(self, domain: int) -> None:

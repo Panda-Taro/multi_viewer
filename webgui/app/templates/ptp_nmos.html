@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>PTP・NMOS設定</h1>
+{% if error %}<div class="alert-error">保存に失敗しました: {{ error }} (前の設定を維持しています)</div>{% endif %}
+
+<h2>PTP設定</h2>
+<form class="settings-form" method="post" action="/mgmt/ptp-nmos/ptp">
+  <label>ドメイン番号 (0-127)</label>
+  <input type="number" name="domain" value="{{ ptp.domain }}">
+  <button type="submit">保存</button>
+</form>
+
+<h2>NMOS設定</h2>
+<form class="settings-form" method="post" action="/mgmt/ptp-nmos/nmos">
+  <label>RDS発見方式</label>
+  <select name="discovery_mode">
+    <option value="mdns" {{ 'selected' if nmos.discovery_mode == 'mdns' }}>mDNS/DNS-SD自動発見</option>
+    <option value="static" {{ 'selected' if nmos.discovery_mode == 'static' }}>静的IP/ポート指定</option>
+    <option value="p2p" {{ 'selected' if nmos.discovery_mode == 'p2p' }}>P2P (RDS無し)</option>
+  </select>
+  <label>Registration API アドレス (静的モード時)</label>
+  <input type="text" name="registration_address" value="{{ nmos.registration_address }}">
+  <label>Registration API ポート (静的モード時)</label>
+  <input type="number" name="registration_port" value="{{ nmos.registration_port }}">
+  <label>IS-04バージョン</label>
+  <select name="is04_version">
+    <option value="v1.1" {{ 'selected' if nmos.is04_version == 'v1.1' }}>v1.1</option>
+    <option value="v1.2" {{ 'selected' if nmos.is04_version == 'v1.2' }}>v1.2</option>
+    <option value="v1.3" {{ 'selected' if nmos.is04_version == 'v1.3' }}>v1.3</option>
+  </select>
+  <label>IS-05バージョン</label>
+  <select name="is05_version">
+    <option value="v1.0" {{ 'selected' if nmos.is05_version == 'v1.0' }}>v1.0</option>
+    <option value="v1.1" {{ 'selected' if nmos.is05_version == 'v1.1' }}>v1.1</option>
+  </select>
+  <label>Node API ソースポート ("auto"またはポート番号)</label>
+  <input type="text" name="node_api_port" value="{{ nmos.node_api_port }}">
+  <label>Registration API ソースポート ("auto"またはポート番号)</label>
+  <input type="text" name="registration_api_port" value="{{ nmos.registration_api_port }}">
+  <button type="submit">保存</button>
+</form>
+{% endblock %}

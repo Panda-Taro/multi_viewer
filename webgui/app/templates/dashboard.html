@@ -4,8 +4,8 @@
 <div class="grid-2">
   <section class="pane">
     <h2>映像プレビュー &amp; 表示モード</h2>
-    <div class="video-preview" id="preview">
-      <span>WebRTC (WHEP) プレビュー — 実機起動時に /monitor01/ の映像を縮小表示</span>
+    <div class="video-preview" id="preview" data-mode="{{ display_mode }}" role="button" tabindex="0" title="クリックで4分割⇔単一表示を切替">
+      <span>WebRTC (WHEP) プレビュー — 実機起動時に /monitor01/ の映像を縮小表示 (クリックで表示モード切替)</span>
     </div>
     <button class="mode-toggle-btn" id="toggle-mode-btn" data-mode="{{ display_mode }}">
       表示モード: <span id="mode-label">{{ '4分割' if display_mode == 'quad' else 'シングル' }}</span> (クリックで切替)
@@ -33,7 +33,9 @@
     <h2>Receiver状態</h2>
     <table>
       {% for r in status.receivers %}
-      <tr><td><span class="led led-{{ r.led.value }}"></span>{{ r.label }}</td></tr>
+      <tr><td><span class="led led-{{ r.led.value }}"></span>{{ r.label }}
+        ({{ '有効・受信中' if r.led.value == 'ok' else ('無効' if r.led.value == 'disabled' else '有効・信号なし') }})
+      </td></tr>
       {% endfor %}
     </table>
   </section>

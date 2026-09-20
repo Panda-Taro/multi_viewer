@@ -14,27 +14,37 @@ from enum import Enum
 
 
 class ReceiverLed(str, Enum):
-    OK = "ok"        # 緑: 正常受信中
-    WARN = "warn"    # 黄: 一部冗長経路のみ受信 (Amber/Blue片系)
-    ERROR = "error"  # 赤: 受信なし/未設定
+    """④-8-4-2-1補足仕様: Receiver受信状態は以下3状態のみを区別する。
+    無効化のトリガー(WebGUI手動 or NMOS IS-05 deactivate)は区別しない。
+    """
+
+    OK = "ok"              # 緑: 有効・受信中(正常)
+    WARN = "warn"          # 黄: 有効・信号なし(異常)
+    DISABLED = "disabled"  # 灰: 無効(手動OFF・NMOS操作によるOFFいずれも同一表示)
 
 
 @dataclass
 class ReceiverStatus:
     label: str
+    enabled: bool
     amber_active: bool
     blue_active: bool
     configured: bool
 
     @property
     def led(self) -> ReceiverLed:
+        """④-8-4-2-1補足仕様の3状態:
+          1. 有効・受信中(正常) = enabled かつ (Amber/Blueいずれかで受信中)
+          2. 有効・信号なし(異常) = enabled だが無受信、または未設定
+          3. 無効 = enabled=False (トリガー種別は問わない)
+        """
+        if not self.enabled:
+            return ReceiverLed.DISABLED
         if not self.configured:
-            return ReceiverLed.ERROR
-        if self.amber_active and self.blue_active:
-            return ReceiverLed.OK
-        if self.amber_active or self.blue_active:
             return ReceiverLed.WARN
-        return ReceiverLed.ERROR
+        if self.amber_active or self.blue_active:
+            return ReceiverLed.OK
+        return ReceiverLed.WARN
 
 
 @dataclass

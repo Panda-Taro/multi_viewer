@@ -103,3 +103,89 @@ def test_audio_apply_sdp():
     )
     assert cfg.audio.multicast_group_amber == "239.1.1.20"
     assert cfg.audio.channels == 2
+
+
+def test_video_receiver_enabled_by_default():
+    cfg = RxSystemConfig()
+    assert cfg.videos[0].enabled is True
+    assert cfg.audio.enabled is True
+
+
+def test_set_enabled_false_excludes_from_mtl_json_but_keeps_settings():
+    """④-8-4-2-1補足仕様: 無効化中もRX設定値(JSON)自体は保持する。"""
+    cfg = RxSystemConfig()
+    cfg.apply_sdp("video", 0, FakeSdp(multicast_group="239.1.1.10", port=20000))
+
+    cfg.set_enabled("video", 0, False)
+
+    assert cfg.videos[0].enabled is False
+    assert cfg.videos[0].multicast_group_amber == "239.1.1.10"
+    assert cfg.videos[0].port == 20000
+    assert cfg.to_mtl_json()["rx_sessions"] == []
+
+
+def test_set_enabled_true_restores_session_from_retained_settings():
+    cfg = RxSystemConfig()
+    cfg.apply_sdp("video", 0, FakeSdp(multicast_group="239.1.1.10", port=20000))
+    cfg.set_enabled("video", 0, False)
+
+    cfg.set_enabled("video", 0, True)
+
+    assert len(cfg.to_mtl_json()["rx_sessions"]) == 1
+
+
+def test_disabled_receiver_excluded_from_format_uniformity_check():
+    cfg = RxSystemConfig()
+    for i in range(3):
+        cfg.apply_sdp(
+            "video", i, FakeSdp(multicast_group=f"239.1.1.{10+i}", port=20000 + i)
+        )
+    cfg.apply_sdp(
+        "video",
+        3,
+        FakeSdp(multicast_group="239.1.1.13", port=20003, video_format="i2160p59"),
+    )
+    assert cfg.check_format_uniformity() == "映像フォーマットが4系統で非統一です"
+
+    cfg.set_enabled("video", 3, False)
+    assert cfg.check_format_uniformity() is None
+
+
+def test_audio_disabled_excluded_from_mtl_json():
+    cfg = RxSystemConfig()
+    cfg.apply_sdp(
+        "audio", 0, FakeSdp(multicast_group="239.1.1.20", port=20100)
+    )
+    cfg.set_enabled("audio", 0, False)
+    assert cfg.to_mtl_json()["rx_sessions"] == []
+
+
+def test_video_format_mode_defaults_to_sdp_and_sdp_overwrites():
+    cfg = RxSystemConfig()
+    assert cfg.videos[0].video_format_mode == "sdp"
+    cfg.apply_sdp("video", 0, FakeSdp(video_format="p1080p50"))
+    assert cfg.videos[0].video_format == "p1080p50"
+
+
+def test_video_format_mode_manual_59i_not_overwritten_by_sdp():
+    """④-8-4-2-1-1-1: 59i/59p固定時はSDPが来ても上書きしない。"""
+    cfg = RxSystemConfig()
+    cfg.videos[0].video_format_mode = "59i"
+    cfg.apply_sdp("video", 0, FakeSdp(video_format="p2160p59"))
+    assert cfg.videos[0].video_format == "i1080p59"
+
+
+def test_video_format_mode_manual_59p():
+    cfg = RxSystemConfig()
+    cfg.videos[0].video_format_mode = "59p"
+    cfg.apply_sdp("video", 0, FakeSdp(video_format="i1080p59"))
+    assert cfg.videos[0].video_format == "p1080p59"
+
+
+def test_audio_sampling_and_ptime_mode_manual_not_overwritten_by_sdp():
+    cfg = RxSystemConfig()
+    cfg.audio.sampling_mode = "48khz"
+    cfg.audio.ptime_mode = "0.125ms"
+    cfg.apply_sdp("audio", 0, FakeSdp(sample_rate=96000, packet_time_ms=1.0))
+    assert cfg.audio.sample_rate == 48000
+    assert cfg.audio.packet_time_ms == 0.125

@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..config_store import store, ConfigValidationError, NicSettings
+from ..log_store import log_store
 from ..nic_ip_change import NicIpChangeManager, NicIpChangeError
 from ..nic_state import read_nic_state, NicStateError
 
@@ -29,6 +30,8 @@ def system_page(request: Request, error: str | None = None, notice: str | None =
     except NicStateError:
         os_nics = []
 
+    recent_log_entries = list(reversed(log_store.filter()[-50:]))
+
     return templates.TemplateResponse(
         request,
         "system.html",
@@ -38,6 +41,7 @@ def system_page(request: Request, error: str | None = None, notice: str | None =
             "viewer": store.viewer,
             "os_nics": os_nics,
             "pending_changes": nic_change_manager.active_pending(),
+            "recent_log_entries": recent_log_entries,
             "error": error,
             "notice": notice,
         },
