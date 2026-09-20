@@ -189,3 +189,19 @@ clone・grepして確認の上で修正):
   追加した。**教訓**: FFmpegのフィルタグラフはコンパイルエラーのような
   静的検証が効かず、実際に`ffmpeg`を実行するまで構造的な誤り(入力数不一致、
   非対応オプション)が発覚しないため、実機での動作確認が特に重要になる。
+- **compose.shがRX設定のプレースホルダをそのままFFmpegへ渡していた**:
+  実機で `mtl_parse_rx_port, 0 sip VIDEO1_MCAST is not valid ip address`
+  で起動失敗を確認。当初のcompose.shは`-p_sip "AMBER_IP"`のような文字列
+  リテラルのプレースホルダをハードコードしており、rxctl.pyが生成した実際の
+  RX設定JSON(`/etc/multiviewer/mtl/rx_config.json`)を全く読んでいなかった。
+  `compositor/compose.py`を新規作成し、RX設定JSONを読み込んで実際の
+  Amber/Blue IP・マルチキャストアドレス・ポート・payload_typeを反映した
+  ffmpeg引数を組み立ててexecするよう書き直した(bashでの複雑な配列/クォート
+  処理を避けるため、ffmpeg起動処理全体をPython化)。オプション名
+  (p_port/r_port/p_sip/r_sip/p_rx_ip/r_rx_ip/udp_port/payload_type)は
+  MTL公式リポジトリのecosystem/ffmpeg_plugin/mtl_common.hを実際に確認して
+  得た。video_size/pix_fmt/fpsはMTL公式プラグインのデフォルト値
+  (1920x1080/yuv422p10le/59.94fps)が本システムの既定フォーマットと一致する
+  ため未指定のままとしたが、NMOS SDPでデフォルト以外のフォーマットが
+  指定された場合の動的マッピングは未実装(要実装、docs/verification.md
+  に追記)。
