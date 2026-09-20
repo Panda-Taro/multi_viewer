@@ -85,7 +85,12 @@ class DisplayModeController:
         zmq/azmqフィルタ仕様に準拠)。そのためcompose.sh側の`-zmq_bind_addr`
         引数は廃止し、本メソッドが生成するfilter_complex文字列の末尾に
         `zmq=bind_address=...` を追加する方式に変更した。
-        filter内オプション値としてIPアドレスの`:`はエスケープ(`\\:`)が必要。
+        filterオプション値内の`:`は、バックスラッシュエスケープ(`\\:`)だと
+        FFmpegのフィルタグラフ/AVOptionの二重パース処理と衝突し
+        `No option name near '//...'` エラーになることを実機で確認したため、
+        `drawtext`の`text='...'`と同様に値全体をシングルクォートで囲む方式
+        (FFmpeg公式ドキュメント記載の代替エスケープ方法。クォート内の`:`は
+        エスケープ不要)を採用した。
         """
         parts = []
         # 各入力を1920x1080相当のハーフサイズにスケールして2x2に並べる
@@ -106,12 +111,11 @@ class DisplayModeController:
             "overlay@quad2=x=0:y=0:enable=0[singleout]"
         )
         if zmq_bind_addr:
-            escaped_addr = zmq_bind_addr.replace(":", r"\:")
             parts.append(
                 f"[quadout]drawtext@alarm=text='{alarm_text}':"
                 "fontcolor=red:fontsize=48:x=(w-text_w)/2:y=h-100:enable=0[vout_pre]"
             )
-            parts.append(f"[vout_pre]zmq=bind_address={escaped_addr}[vout]")
+            parts.append(f"[vout_pre]zmq=bind_address='{zmq_bind_addr}'[vout]")
         else:
             parts.append(
                 f"[quadout]drawtext@alarm=text='{alarm_text}':"
