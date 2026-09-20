@@ -15,7 +15,12 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "mtl"))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# server.pyがbridge.src.translatorとしてパッケージ経由でimportした場合でも
+# 同ディレクトリ内のsdpモジュールを解決できるよう、自身のディレクトリも
+# sys.pathへ明示的に追加する (server.py側の同種の対応と合わせる)。
+sys.path.insert(0, _HERE)
+sys.path.insert(0, os.path.join(_HERE, "..", "..", "mtl"))
 
 from sdp import parse_sdp, ParsedSdp, SdpParseError  # noqa: E402
 from rxctl import RxSystemConfig, ConfigValidationError  # noqa: E402

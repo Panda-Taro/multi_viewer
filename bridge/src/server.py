@@ -19,7 +19,12 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "mtl"))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# `uvicorn bridge.src.server:app` のようにパッケージ経由で読み込まれる場合、
+# server.py自身のディレクトリ(bridge/src)は自動的にはsys.pathへ追加されない
+# ため、同ディレクトリ内のtranslator/igmpをimportするために明示的に追加する。
+sys.path.insert(0, _HERE)
+sys.path.insert(0, os.path.join(_HERE, "..", "..", "mtl"))
 
 from translator import apply_activate_request, ActivateTranslationError  # noqa: E402
 from igmp import plan_joins, join_ssm_group, IgmpError  # noqa: E402
