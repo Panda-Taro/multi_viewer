@@ -45,6 +45,7 @@ install_deps() {
     wget unzip patch pkg-config \
     nasm yasm \
     libx264-dev libopus-dev libzmq3-dev \
+    libfreetype6-dev libfontconfig1-dev libharfbuzz-dev \
     build-essential
 }
 
@@ -98,6 +99,10 @@ build_ffmpeg() {
   # --enable-libopus: 要件⑥-4-4 (WebRTC音声コーデックOpus)。
   # --enable-libzmq: compositor/layout.pyが埋め込むzmqフィルタ(④-4、表示モード
   # 切替を1秒以内にFFmpeg再起動無しで反映するための仕組み)に必要。
+  # --enable-libfreetype(+fontconfig/harfbuzz): drawtextフィルタ(④-1の
+  # フォーマット不統一アラームをOSD焼き込みで表示するために使用)に必要。
+  # 実機で `[AVFilterGraph] No such filter: 'drawtext'` により起動失敗する
+  # ことを確認して追加した(デフォルトではdrawtextは無効化されている)。
   # --enable-mtl: MTLパッチ適用により追加されるlibavdeviceの入力デバイス
   # (mtl_st20p/mtl_st30p) を有効化する configure フラグ。
   ./configure \
@@ -108,6 +113,9 @@ build_ffmpeg() {
     --enable-libx264 \
     --enable-libopus \
     --enable-libzmq \
+    --enable-libfreetype \
+    --enable-libfontconfig \
+    --enable-libharfbuzz \
     --enable-mtl
   make -j"$(nproc)"
   make install

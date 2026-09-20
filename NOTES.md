@@ -164,3 +164,10 @@ clone・grepして確認の上で修正):
   ちょうど本システムが使いたいポートと一致することが分かったため、
   `bind_address`オプションを一切指定せず裸の`zmq`フィルタ
   (`[vout_pre]zmq[vout]`)を使う方式に変更してエスケープ問題自体を回避した。
+  **さらに3回目の実機検証で判明**: zmqのエスケープ問題解消後、今度は
+  `[AVFilterGraph] No such filter: 'drawtext'` で失敗した。drawtextフィルタ
+  (④-1のフォーマット不統一アラームのOSD焼き込みに使用)はFFmpegのデフォルト
+  configureでは無効化されており、`--enable-libfreetype`
+  (+`--enable-libfontconfig` `--enable-libharfbuzz`、
+  `libfreetype6-dev`/`libfontconfig1-dev`/`libharfbuzz-dev`)が必要なため
+  build_ffmpeg.shに追加した。
