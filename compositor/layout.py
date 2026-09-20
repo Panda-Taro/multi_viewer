@@ -70,11 +70,22 @@ class DisplayModeController:
         cmds.append(f"drawtext@alarm enable {'1' if self.format_alarm else '0'}")
         return cmds
 
-    def build_filter_complex(self, alarm_text: str = ALARM_TEXT) -> str:
+    def build_filter_complex(
+        self, alarm_text: str = ALARM_TEXT, zmq_bind_addr: str | None = "tcp://127.0.0.1:5555"
+    ) -> str:
         """初回起動時にFFmpegへ渡す filter_complex 全体を構築する。
 
         入力: [0:v][1:v][2:v][3:v] (4映像), 出力ラベル [vout]
         4分割は2x2 (0=左上,1=右上,2=左下,3=右下) と決定 (NOTES.md参照)。
+
+        【2026-09 実機ビルドで判明した修正】FFmpegには `-zmq_bind_addr` という
+        グローバルCLIオプションは存在しない(FFmpeg本体は`Unrecognized option`で
+        起動直後に失敗する)。`zmq`フィルタのbind_addressはfilter_complex内に
+        `zmq` フィルタノードとして組み込む必要がある(FFmpeg公式ドキュメントの
+        zmq/azmqフィルタ仕様に準拠)。そのためcompose.sh側の`-zmq_bind_addr`
+        引数は廃止し、本メソッドが生成するfilter_complex文字列の末尾に
+        `zmq=bind_address=...` を追加する方式に変更した。
+        filter内オプション値としてIPアドレスの`:`はエスケープ(`\\:`)が必要。
         """
         parts = []
         # 各入力を1920x1080相当のハーフサイズにスケールして2x2に並べる
@@ -94,8 +105,16 @@ class DisplayModeController:
             "[single0][single1][single2][single3]"
             "overlay@quad2=x=0:y=0:enable=0[singleout]"
         )
-        parts.append(
-            f"[quadout]drawtext@alarm=text='{alarm_text}':"
-            "fontcolor=red:fontsize=48:x=(w-text_w)/2:y=h-100:enable=0[vout]"
-        )
+        if zmq_bind_addr:
+            escaped_addr = zmq_bind_addr.replace(":", r"\:")
+            parts.append(
+                f"[quadout]drawtext@alarm=text='{alarm_text}':"
+                "fontcolor=red:fontsize=48:x=(w-text_w)/2:y=h-100:enable=0[vout_pre]"
+            )
+            parts.append(f"[vout_pre]zmq=bind_address={escaped_addr}[vout]")
+        else:
+            parts.append(
+                f"[quadout]drawtext@alarm=text='{alarm_text}':"
+                "fontcolor=red:fontsize=48:x=(w-text_w)/2:y=h-100:enable=0[vout]"
+            )
         return ";".join(parts)

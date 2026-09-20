@@ -56,6 +56,23 @@
 
 namespace multiviewer
 {
+    // ログカテゴリ。名前空間スコープの static const として保持する。
+    //
+    // 【2026-09 実機デバッグで判明した修正】当初は
+    // `nmos::stash_category(nmos::category{ "..." })` のように一時オブジェクトを
+    // 直接渡していたが、`nmos::stash_category(const category&)` が返す
+    // omanip_function はcategoryへの参照をキャプチャする実装であるため、
+    // 呼び出し式の終わりで一時オブジェクトが破棄されるとダングリング参照になる。
+    // ログ出力の度にこの壊れた参照を経由して文字列を再構築しようとして
+    // SIGSEGV (std::string::_M_construct内でクラッシュ) していた。
+    // nmos-cppの公式サンプル実装(Development/nmos-cpp-node/node_implementation.cpp)
+    // と同様に、名前空間スコープの寿命の長いconstオブジェクトとして保持することで
+    // 解消した。
+    namespace categories
+    {
+        const nmos::category node_implementation{ "multiviewer_node_implementation" };
+    }
+
     // 要件④-1,④-2: 映像Receiver x4 + 音声Receiver x1。Senderは絶対に作らない (⑦)。
     const int video_receiver_count = 4;
 
@@ -148,7 +165,7 @@ void validate_node_implementation_settings(const nmos::settings& settings)
 // (Receiver専用のためIS-12制御プロトコルやイベントシミュレーション等の追加処理は行わない)。
 void node_implementation_thread(nmos::node_model& model, nmos::experimental::control_protocol_state&, slog::base_gate& gate_)
 {
-    nmos::details::omanip_gate gate{ gate_, nmos::stash_category(nmos::category{ "multiviewer_node_implementation" }) };
+    nmos::details::omanip_gate gate{ gate_, nmos::stash_category(multiviewer::categories::node_implementation) };
 
     try
     {

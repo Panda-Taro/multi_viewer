@@ -134,3 +134,26 @@ clone・grepして確認の上で修正):
   静かにリトライを続ける設計とし、これは実機での運用開始(WebGUIでの
   NIC/Receiver設定)によって解消される想定の「未設定状態」であり、
   コード上の不具合ではない。実機検証手順は`docs/verification.md`参照。
+- **nmos-cpp node_implementation.cppのSIGSEGV(実機gdbで特定)**: 実機で
+  `multiviewer-nmos-node`がnode/deviceリソース挿入後にクラッシュしていた。
+  `gdb -batch -ex run -ex bt`で取得したバックトレースから、
+  `nmos::stash_category(nmos::category{ "..." })` に**一時オブジェクト**を
+  直接渡していたことが原因と判明。`stash_category(const category&)`が
+  返す`omanip_function`はcategoryへの参照をキャプチャする実装のため、
+  呼び出し式の終わりで一時オブジェクトが破棄されるとダングリング参照になり、
+  ログ出力の度に壊れた参照から`std::string`を再構築しようとしてSIGSEGVして
+  いた。nmos-cpp公式サンプルの`namespace categories { const nmos::category
+  node_implementation{ "..." }; }`という名前空間スコープのstaticオブジェクト
+  パターンに合わせて修正した。**教訓**: 一時オブジェクトを「参照をキャプチャする
+  コールバックファクトリ」に渡す設計のAPIは、コンパイルが通っても実行時に
+  ダングリング参照でクラッシュすることがあるため、公式サンプルのオブジェクト
+  寿命の扱い方まで含めて模倣する必要がある。
+- **FFmpeg zmqフィルタの組み込み方法の誤り**: `compositor/compose.sh`が
+  `-zmq_bind_addr`というFFmpegに存在しないグローバルCLIオプションを渡して
+  いたため`Unrecognized option`で即終了していた。FFmpegの`zmq`フィルタは
+  filter_complex内にフィルタノード(`zmq=bind_address=...`)として組み込む
+  設計であるため、`compositor/layout.py`の`build_filter_complex()`が
+  自身の末尾に`zmq`フィルタを追加するよう修正し、compose.sh側の
+  `-zmq_bind_addr`引数は削除した。また`zmq`フィルタ自体を有効化するには
+  FFmpegを`--enable-libzmq`(+`libzmq3-dev`)付きでビルドする必要があるが
+  当初のbuild_ffmpeg.shに含めていなかったため追加した。

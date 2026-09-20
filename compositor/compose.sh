@@ -27,11 +27,11 @@ PYTHON_BIN="python3"
 command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-FILTER_COMPLEX=$(MV_COMPOSITOR_DIR="${SCRIPT_DIR}" "${PYTHON_BIN}" - <<'PYEOF'
+FILTER_COMPLEX=$(MV_COMPOSITOR_DIR="${SCRIPT_DIR}" MV_ZMQ_BIND="${ZMQ_BIND}" "${PYTHON_BIN}" - <<'PYEOF'
 import sys, os
 sys.path.insert(0, os.environ["MV_COMPOSITOR_DIR"])
 from layout import DisplayModeController
-print(DisplayModeController().build_filter_complex())
+print(DisplayModeController().build_filter_complex(zmq_bind_addr=os.environ["MV_ZMQ_BIND"]))
 PYEOF
 )
 
@@ -51,5 +51,4 @@ exec "${FFMPEG_BIN}" \
   -c:v libx264 -preset veryfast -tune zerolatency -g 60 \
   -c:a libopus -ac 2 -ar 48000 \
   -f rtsp -rtsp_transport tcp \
-  -zmq_bind_addr "${ZMQ_BIND}" \
   "${MEDIAMTX_RTSP_URL}"

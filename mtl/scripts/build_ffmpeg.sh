@@ -44,7 +44,7 @@ install_deps() {
   apt-get install -y \
     wget unzip patch pkg-config \
     nasm yasm \
-    libx264-dev libopus-dev \
+    libx264-dev libopus-dev libzmq3-dev \
     build-essential
 }
 
@@ -96,6 +96,8 @@ build_ffmpeg() {
 
   # --enable-gpl --enable-libx264: 要件⑥-4-3 (WebRTC映像コーデックH.264固定)。
   # --enable-libopus: 要件⑥-4-4 (WebRTC音声コーデックOpus)。
+  # --enable-libzmq: compositor/layout.pyが埋め込むzmqフィルタ(④-4、表示モード
+  # 切替を1秒以内にFFmpeg再起動無しで反映するための仕組み)に必要。
   # --enable-mtl: MTLパッチ適用により追加されるlibavdeviceの入力デバイス
   # (mtl_st20p/mtl_st30p) を有効化する configure フラグ。
   ./configure \
@@ -105,6 +107,7 @@ build_ffmpeg() {
     --enable-libopenh264 --enable-encoder=libopenh264 \
     --enable-libx264 \
     --enable-libopus \
+    --enable-libzmq \
     --enable-mtl
   make -j"$(nproc)"
   make install

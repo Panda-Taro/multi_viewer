@@ -62,6 +62,23 @@ def test_build_filter_complex_contains_alarm_text():
     assert "hstack" in fc and "vstack" in fc
 
 
+def test_build_filter_complex_embeds_zmq_filter_not_cli_flag():
+    # 2026-09実機ビルドで判明: FFmpegに `-zmq_bind_addr` というグローバル
+    # CLIオプションは存在せず、filter_complex内に `zmq` フィルタノードとして
+    # 組み込む必要がある (zmqctl.pyがREQ/REPで送るコマンド宛先はfilter名)。
+    c = DisplayModeController()
+    fc = c.build_filter_complex(zmq_bind_addr="tcp://127.0.0.1:5555")
+    assert "zmq=bind_address=tcp\\://127.0.0.1\\:5555" in fc
+    assert fc.endswith("[vout]")
+
+
+def test_build_filter_complex_without_zmq_still_valid():
+    c = DisplayModeController()
+    fc = c.build_filter_complex(zmq_bind_addr=None)
+    assert "zmq=" not in fc
+    assert fc.endswith("[vout]")
+
+
 def test_history_tracks_mode_changes():
     c = DisplayModeController()
     c.toggle()
