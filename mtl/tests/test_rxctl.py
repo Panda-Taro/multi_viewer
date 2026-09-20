@@ -78,12 +78,20 @@ def test_to_mtl_json_only_includes_configured_sessions():
     assert j["ptp"]["domain"] == 24
 
 
-def test_to_mtl_json_marks_redundant_when_blue_group_set():
+def test_to_mtl_json_uses_real_rxtxapp_field_names():
+    # 実際のMTL RxTxApp (tests/tools/RxTxApp/src/parse_json.c) のスキーマに
+    # 合わせたフィールド名であることを確認する (2026-09の実機ビルドで判明した
+    # 誤り: 'dip'ではなく'ip'、'udp_port'ではなく'start_port'、'type'必須)。
     cfg = RxSystemConfig()
     cfg.apply_sdp("video", 0, FakeSdp())
     cfg.videos[0].multicast_group_blue = "239.2.1.10"
     j = cfg.to_mtl_json()
-    assert j["rx_sessions"][0]["video"][0]["st2022_7_redundant"] is True
+    session = j["rx_sessions"][0]
+    assert "ip" in session and "dip" not in session
+    assert session["ip"] == [cfg.videos[0].multicast_group_amber, "239.2.1.10"]
+    video = session["video"][0]
+    assert video["type"] == "frame"
+    assert "start_port" in video and "udp_port" not in video
 
 
 def test_audio_apply_sdp():

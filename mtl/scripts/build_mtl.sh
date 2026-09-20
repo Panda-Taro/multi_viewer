@@ -99,7 +99,9 @@ main() {
   install_af_xdp_tools
   build_dpdk
   build_mtl
-  log "MTLビルド完了。RxTxAppは ${BUILD_DIR}/Media-Transport-Library/build/app/RxTxApp"
+  log "MTLビルド完了。RxTxAppは tests/tools/RxTxApp 配下の独立したmesonプロジェクトとして"
+  log "ビルドされ、ninja installによりシステム全体(デフォルトprefix=/usr/local)へ"
+  log "インストールされる。通常は /usr/local/bin/RxTxApp として配置される。"
   log "systemdユニットからは mtl/scripts/start_rx.sh 経由で起動される"
 }
 

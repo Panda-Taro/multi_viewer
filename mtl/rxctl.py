@@ -104,22 +104,37 @@ class RxSystemConfig:
         return None
 
     def to_mtl_json(self) -> dict:
-        """MTL RX設定JSON (app/etc/*.json 準拠スキーマ) を生成する。"""
+        """MTL RxTxApp設定JSONを生成する。
+
+        フィールド名は実際にMTL本体(tests/tools/RxTxApp)をソースから確認し、
+        以下の点を実機ビルドで判明した誤りから修正した (2026-09):
+          - rx_sessionsの受信マルチキャストアドレスは"dip"ではなく"ip"
+            ("dip"はtx_sessions専用。RxTxApp tests/tools/RxTxApp/src/parse_json.c
+            および script/loop_json/multicast_redundant_1v_1a_1anc.json 参照)
+          - ポート番号フィールドは"udp_port"ではなく"start_port"
+          - video/audioセッションオブジェクトには必須で"type": "frame"が必要
+            (parse_json.cはtypeフィールドをNULLチェックなしでstrcmp()に渡すため、
+            欠落しているとRxTxAppがクラッシュする)
+        なお、RxTxAppのCLI/JSONスキーマにはPTPドメインを指定する項目が
+        ソース上見当たらず(tests/tools/RxTxApp配下に"domain"文字列が一切ない)、
+        ここでの"ptp"ブロックは実際には読まれない可能性が高い。実機でのPTP
+        ドメイン設定方法は要調査 (docs/verification.md参照)。
+        """
         rx_sessions = []
         for v in self.videos:
             if not v.is_configured():
                 continue
             rx_sessions.append(
                 {
-                    "dip": [v.multicast_group_amber, v.multicast_group_blue],
+                    "ip": [v.multicast_group_amber, v.multicast_group_blue],
                     "interface": [0, 1],
                     "video": [
                         {
-                            "udp_port": v.port,
+                            "type": "frame",
+                            "start_port": v.port,
                             "payload_type": v.payload_type,
                             "video_format": v.video_format,
                             "pg_format": v.pg_format,
-                            "st2022_7_redundant": bool(v.multicast_group_blue),
                         }
                     ],
                 }
@@ -128,20 +143,20 @@ class RxSystemConfig:
         if self.audio.is_configured():
             rx_sessions.append(
                 {
-                    "dip": [
+                    "ip": [
                         self.audio.multicast_group_amber,
                         self.audio.multicast_group_blue,
                     ],
                     "interface": [0, 1],
                     "audio": [
                         {
-                            "udp_port": self.audio.port,
+                            "type": "frame",
+                            "start_port": self.audio.port,
                             "payload_type": self.audio.payload_type,
                             "audio_format": "PCM24",
                             "audio_channel": ["U02"],
                             "audio_sampling": f"{self.audio.sample_rate // 1000}kHz",
                             "audio_ptime": f"{self.audio.packet_time_ms}ms",
-                            "st2022_7_redundant": bool(self.audio.multicast_group_blue),
                         }
                     ],
                 }

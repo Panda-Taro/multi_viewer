@@ -1,5 +1,5 @@
 {
-  "_comment": "MTL RX設定テンプレート。rxctl.py が実行時にこのテンプレートを基に生成する。フィールド名はMTL公式 app/etc/*.json のスキーマに準拠 (要実機バージョン確認、NOTES.md参照)。",
+  "_comment": "MTL RxTxApp RX設定テンプレート。rxctl.py が実行時にこのテンプレートを基に生成する。フィールド名は実際にMTL本体(tests/tools/RxTxApp/src/parse_json.c)をソースから確認して修正済み(2026-09): rx_sessionsの受信アドレスは'ip'(txの'dip'とは別)、ポートは'start_port'、video/audioセッションには必須で'type':'frame'が必要(欠落するとRxTxAppがクラッシュする)。'ptp'ブロックはRxTxAppのソース上'domain'相当の読み取り箇所が見当たらず、実際に効果があるか未確認(要実機検証、docs/verification.md参照)。",
   "interfaces": [
     { "name": "AMBER_IFACE", "ip": "AMBER_IP" },
     { "name": "BLUE_IFACE", "ip": "BLUE_IP" }
@@ -7,78 +7,78 @@
   "ptp": {
     "domain": 24,
     "priority_interface": 0,
-    "_comment": "priority_interface 0=Amber(NIC A), 1=Blue(NIC B)。Amber障害時はMTLの内部PTPクライアントがBlue側の受信PTPへ自動フェイルオーバーする(ST2059-2、要実機検証)。"
+    "_comment": "priority_interface 0=Amber(NIC A), 1=Blue(NIC B)。Amber障害時はMTLの内部PTPクライアントがBlue側の受信PTPへ自動フェイルオーバーする想定(ST2059-2、要実機検証)。本ブロック自体がRxTxAppに読まれるかは未確認。"
   },
   "rx_sessions": [
     {
       "_comment": "video receiver 1 (ST2022-7: interface 0=Amber, 1=Blueの2冗長経路)",
-      "dip": ["239.1.1.10", "239.2.1.10"],
+      "ip": ["239.1.1.10", "239.2.1.10"],
       "interface": [0, 1],
       "video": [
         {
-          "udp_port": 20000,
+          "type": "frame",
+          "start_port": 20000,
           "payload_type": 112,
           "video_format": "i1080p59",
-          "pg_format": "YUV_422_10bit",
-          "st2022_7_redundant": true
+          "pg_format": "YUV_422_10bit"
         }
       ]
     },
     {
       "_comment": "video receiver 2",
-      "dip": ["239.1.1.11", "239.2.1.11"],
+      "ip": ["239.1.1.11", "239.2.1.11"],
       "interface": [0, 1],
       "video": [
         {
-          "udp_port": 20001,
+          "type": "frame",
+          "start_port": 20001,
           "payload_type": 112,
           "video_format": "i1080p59",
-          "pg_format": "YUV_422_10bit",
-          "st2022_7_redundant": true
+          "pg_format": "YUV_422_10bit"
         }
       ]
     },
     {
       "_comment": "video receiver 3",
-      "dip": ["239.1.1.12", "239.2.1.12"],
+      "ip": ["239.1.1.12", "239.2.1.12"],
       "interface": [0, 1],
       "video": [
         {
-          "udp_port": 20002,
+          "type": "frame",
+          "start_port": 20002,
           "payload_type": 112,
           "video_format": "i1080p59",
-          "pg_format": "YUV_422_10bit",
-          "st2022_7_redundant": true
+          "pg_format": "YUV_422_10bit"
         }
       ]
     },
     {
       "_comment": "video receiver 4",
-      "dip": ["239.1.1.13", "239.2.1.13"],
+      "ip": ["239.1.1.13", "239.2.1.13"],
       "interface": [0, 1],
       "video": [
         {
-          "udp_port": 20003,
+          "type": "frame",
+          "start_port": 20003,
           "payload_type": 112,
           "video_format": "i1080p59",
-          "pg_format": "YUV_422_10bit",
-          "st2022_7_redundant": true
+          "pg_format": "YUV_422_10bit"
         }
       ]
     },
     {
       "_comment": "audio receiver 1 (ch1/2のみ使用、ch3+は無視する上位層(compositor)の責務)",
-      "dip": ["239.1.1.20", "239.2.1.20"],
+      "ip": ["239.1.1.20", "239.2.1.20"],
       "interface": [0, 1],
       "audio": [
         {
-          "udp_port": 20100,
+          "type": "frame",
+          "start_port": 20100,
           "payload_type": 111,
           "audio_format": "PCM24",
           "audio_channel": ["U02"],
           "audio_sampling": "48kHz",
-          "audio_ptime": "1ms",
-          "st2022_7_redundant": true
+          "audio_ptime": "1ms"
         }
       ]
     }

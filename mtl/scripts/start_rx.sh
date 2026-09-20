@@ -8,7 +8,11 @@
 set -euo pipefail
 
 MTL_RX_CONFIG="${MTL_RX_CONFIG:-/etc/multiviewer/mtl/rx_config.json}"
-MTL_BIN="${MTL_BIN:-/opt/multiviewer/build/Media-Transport-Library/build/app/RxTxApp}"
+# RxTxAppはtests/tools/RxTxApp配下の独立したmesonプロジェクトとしてビルドされ、
+# `ninja install`によりシステム全体(デフォルトprefix=/usr/local)へインストール
+# される設計 (MTL本体のbuild.sh参照)。/opt/multiviewer/build/...配下には
+# 残らないため、`which`でも見つかる/usr/local/bin/RxTxAppをデフォルトとする。
+MTL_BIN="${MTL_BIN:-/usr/local/bin/RxTxApp}"
 PTP_DOMAIN="${PTP_DOMAIN:-24}"
 
 if [[ ! -x "${MTL_BIN}" ]]; then
@@ -23,8 +27,14 @@ if [[ ! -f "${MTL_RX_CONFIG}" ]]; then
   exit 1
 fi
 
-echo "[start_rx] MTL RXを起動: config=${MTL_RX_CONFIG} ptp_domain=${PTP_DOMAIN}"
+# 2026-09実機ビルドでの判明事項: RxTxApp (tests/tools/RxTxApp/src/args.c) には
+# `--ptp_domain` および `--rx_only` というCLIオプションは存在しない
+# (getopt_longの選択肢一覧に無く、渡すと起動直後にエラー終了する)。
+# RxTxAppはRX/TX兼用ツールで、JSON設定内にtx_sessionsを含めなければRXのみ
+# 動作する。PTPドメインの設定方法はソース上"domain"という文字列自体が
+# tests/tools/RxTxApp配下に見当たらず未確認 (要実機検証、docs/verification.md参照)。
+# PTP_DOMAIN環境変数は将来の拡張のためにrx_config.jsonの"ptp.domain"へ
+# rxctl.py側で反映される設計だが、RxTxApp側で実際に読まれるかは未検証。
+echo "[start_rx] MTL RXを起動: config=${MTL_RX_CONFIG} (ptp_domain=${PTP_DOMAIN}はrx_config.json内のptp.domainとして反映される想定、RxTxApp側での実際の読み取りは未検証)"
 exec "${MTL_BIN}" \
-  --config_file "${MTL_RX_CONFIG}" \
-  --ptp_domain "${PTP_DOMAIN}" \
-  --rx_only
+  --config_file "${MTL_RX_CONFIG}"

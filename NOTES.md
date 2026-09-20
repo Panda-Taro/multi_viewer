@@ -71,3 +71,44 @@
   `mcast_sip_addr`等のフィールド名)に準拠したラッパースクリプト・設定テンプレートとして
   実装した。実行可能バイナリそのものは含まれない(要件のインストールスクリプトが
   実機でソースからビルドする)。
+
+### 2026-09 実機セットアップで判明した修正 (MTL RxTxApp関連)
+
+実際にUbuntu Server実機で `scripts/setup.sh` を実行し、以下の誤りが判明した
+(sony/nmos-cpp・OpenVisualCloud/Media-Transport-Libraryの実ソースを直接
+clone・grepして確認の上で修正):
+
+- **RxTxAppの配置場所**: MTL本体の`build.sh`は`tests/tools/RxTxApp/`配下を
+  独立したmesonプロジェクトとして別途ビルドし、`ninja install`でシステム全体
+  (デフォルトprefix `/usr/local`)へインストールする。`/opt/multiviewer/build/
+  Media-Transport-Library/build/app/RxTxApp`のような場所には存在しない。
+  正しくは`/usr/local/bin/RxTxApp`。`mtl/scripts/start_rx.sh`のデフォルト
+  `MTL_BIN`を修正した。
+- **RxTxAppのCLIオプション**: `--ptp_domain`・`--rx_only`という実際のCLI
+  オプションは存在しない(tests/tools/RxTxApp/src/args.cのgetopt_long一覧に
+  無い)。渡すとRxTxAppが即座にエラー終了する。`--config_file`のみ実在する。
+  RxTxAppはRX/TX兼用ツールで、JSON設定に`tx_sessions`を含めなければRX
+  専用として動作する。PTPドメインを指定する実際の方法はソース上
+  ("domain"という文字列がtests/tools/RxTxApp配下に一切ない)特定できず、
+  **要実機検証**として残した。
+- **RxTxApp JSON設定のフィールド名**: `rx_sessions`内の受信マルチキャスト
+  アドレスは`dip`ではなく`ip`(`dip`はtx_sessions専用)。ポート番号は
+  `udp_port`ではなく`start_port`。video/audioセッションオブジェクトには
+  `"type": "frame"`が必須(parse_json.cがNULLチェックなしでこの値を
+  `strcmp()`に渡すため、欠落しているとRxTxAppがクラッシュする)。
+  `mtl/rxctl.py`の`to_mtl_json()`と`mtl/config/rx_config.template.json`を
+  修正した。
+- **nmos-cpp node_implementation.cppの全面書き直し**: 当初の実装は
+  `nmos::get_seed_id`・`nmos::make_node_resources`・
+  `nmos::experimental::insert_resource_after`・`nmos::node_model::
+  connection_activation_handler`など、現行nmos-cpp(masterブランチ)には
+  存在しないAPIを前提にしていた。sony/nmos-cppを実際にcloneし、公式サンプル
+  実装(`Development/nmos-cpp-node/node_implementation.cpp`)の実際のAPI
+  パターンを確認した上で全面的に書き直した
+  (詳細はnmos/node_implementation/multiviewer_node_implementation.cpp
+  冒頭のコメントおよびコミット履歴参照)。
+- **教訓**: 本プロジェクトのように依存する外部OSSのAPI/CLIが要件定義時点の
+  想定から変化・相違している場合、コメントで「要実機確認」と書くだけでは
+  不十分で、実際に対象リポジトリをcloneしてソースを確認しないと動作しない
+  コードになりやすい。今回は全て実機ビルドのフィードバックと実ソース確認に
+  より修正した。
