@@ -16,7 +16,12 @@ set -euo pipefail
 RX_CONFIG="${MTL_RX_CONFIG:-/etc/multiviewer/mtl/rx_config.json}"
 MEDIAMTX_RTSP_URL="${MEDIAMTX_RTSP_URL:-rtsp://127.0.0.1:8554/monitor01}"
 FFMPEG_BIN="${FFMPEG_BIN:-ffmpeg}"
-ZMQ_BIND="${ZMQ_BIND:-tcp://127.0.0.1:5555}"
+# zmqフィルタはbind_addressを明示指定せず、FFmpegコンパイル時のデフォルト
+# (tcp://*:5555。libavfilter/f_zmq.c参照) をそのまま使う。理由は
+# layout.py の build_filter_complex() docstring 参照(カスタムアドレスを
+# filter_complex内にインライン指定するとFFmpegのフィルタグラフ構文解析と
+# 衝突してエラーになることを実機で確認したため)。zmqctl.py側の接続先
+# tcp://127.0.0.1:5555 はこのデフォルトへループバック接続できる。
 
 if ! command -v "${FFMPEG_BIN}" >/dev/null 2>&1; then
   echo "[compose] ffmpeg が見つかりません。MTL同梱パッチ適用済みFFmpegをビルドしてください" >&2
@@ -27,11 +32,11 @@ PYTHON_BIN="python3"
 command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-FILTER_COMPLEX=$(MV_COMPOSITOR_DIR="${SCRIPT_DIR}" MV_ZMQ_BIND="${ZMQ_BIND}" "${PYTHON_BIN}" - <<'PYEOF'
+FILTER_COMPLEX=$(MV_COMPOSITOR_DIR="${SCRIPT_DIR}" "${PYTHON_BIN}" - <<'PYEOF'
 import sys, os
 sys.path.insert(0, os.environ["MV_COMPOSITOR_DIR"])
 from layout import DisplayModeController
-print(DisplayModeController().build_filter_complex(zmq_bind_addr=os.environ["MV_ZMQ_BIND"]))
+print(DisplayModeController().build_filter_complex())
 PYEOF
 )
 

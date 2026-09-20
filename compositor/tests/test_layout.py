@@ -66,19 +66,22 @@ def test_build_filter_complex_embeds_zmq_filter_not_cli_flag():
     # 2026-09実機ビルドで判明: FFmpegに `-zmq_bind_addr` というグローバル
     # CLIオプションは存在せず、filter_complex内に `zmq` フィルタノードとして
     # 組み込む必要がある (zmqctl.pyがREQ/REPで送るコマンド宛先はfilter名)。
+    # また、bind_addressをインライン指定するとバックスラッシュ/シングル
+    # クォートいずれのエスケープでもFFmpegのフィルタグラフ構文解析と衝突して
+    # 失敗することを実機で確認したため、コンパイル時デフォルト(tcp://*:5555。
+    # ちょうど本システムが使うポートと一致)をそのまま使い、bind_addressは
+    # 一切指定しない裸の`zmq`フィルタとして埋め込む方式にした。
     c = DisplayModeController()
-    fc = c.build_filter_complex(zmq_bind_addr="tcp://127.0.0.1:5555")
-    # 2026-09実機ビルドで判明: バックスラッシュでの`:`エスケープはFFmpegの
-    # フィルタグラフ/AVOption二重パースと衝突してエラーになるため、
-    # drawtextのtext='...'と同様にシングルクォートで値全体を囲む方式に変更した。
-    assert "zmq=bind_address='tcp://127.0.0.1:5555'" in fc
+    fc = c.build_filter_complex()
+    assert "]zmq[vout]" in fc
+    assert "bind_address" not in fc
     assert fc.endswith("[vout]")
 
 
 def test_build_filter_complex_without_zmq_still_valid():
     c = DisplayModeController()
-    fc = c.build_filter_complex(zmq_bind_addr=None)
-    assert "zmq=" not in fc
+    fc = c.build_filter_complex(enable_zmq=False)
+    assert "zmq" not in fc
     assert fc.endswith("[vout]")
 
 

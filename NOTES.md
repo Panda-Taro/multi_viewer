@@ -157,3 +157,10 @@ clone・grepして確認の上で修正):
   `-zmq_bind_addr`引数は削除した。また`zmq`フィルタ自体を有効化するには
   FFmpegを`--enable-libzmq`(+`libzmq3-dev`)付きでビルドする必要があるが
   当初のbuild_ffmpeg.shに含めていなかったため追加した。
+  **さらに2回目の実機検証で判明**: `bind_address='tcp://127.0.0.1:5555'`
+  というシングルクォート方式でも同じ`No option name near '//...'`エラーが
+  再現した(FFmpeg 7.0.3)。FFmpeg本体のソース(libavfilter/f_zmq.c)を確認
+  したところ`bind_address`のデフォルト値が`tcp://*:5555`であり、
+  ちょうど本システムが使いたいポートと一致することが分かったため、
+  `bind_address`オプションを一切指定せず裸の`zmq`フィルタ
+  (`[vout_pre]zmq[vout]`)を使う方式に変更してエスケープ問題自体を回避した。

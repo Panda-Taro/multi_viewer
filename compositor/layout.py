@@ -70,27 +70,31 @@ class DisplayModeController:
         cmds.append(f"drawtext@alarm enable {'1' if self.format_alarm else '0'}")
         return cmds
 
-    def build_filter_complex(
-        self, alarm_text: str = ALARM_TEXT, zmq_bind_addr: str | None = "tcp://127.0.0.1:5555"
-    ) -> str:
+    def build_filter_complex(self, alarm_text: str = ALARM_TEXT, enable_zmq: bool = True) -> str:
         """初回起動時にFFmpegへ渡す filter_complex 全体を構築する。
 
         入力: [0:v][1:v][2:v][3:v] (4映像), 出力ラベル [vout]
         4分割は2x2 (0=左上,1=右上,2=左下,3=右下) と決定 (NOTES.md参照)。
 
-        【2026-09 実機ビルドで判明した修正】FFmpegには `-zmq_bind_addr` という
-        グローバルCLIオプションは存在しない(FFmpeg本体は`Unrecognized option`で
-        起動直後に失敗する)。`zmq`フィルタのbind_addressはfilter_complex内に
-        `zmq` フィルタノードとして組み込む必要がある(FFmpeg公式ドキュメントの
-        zmq/azmqフィルタ仕様に準拠)。そのためcompose.sh側の`-zmq_bind_addr`
-        引数は廃止し、本メソッドが生成するfilter_complex文字列の末尾に
-        `zmq=bind_address=...` を追加する方式に変更した。
-        filterオプション値内の`:`は、バックスラッシュエスケープ(`\\:`)だと
-        FFmpegのフィルタグラフ/AVOptionの二重パース処理と衝突し
-        `No option name near '//...'` エラーになることを実機で確認したため、
-        `drawtext`の`text='...'`と同様に値全体をシングルクォートで囲む方式
-        (FFmpeg公式ドキュメント記載の代替エスケープ方法。クォート内の`:`は
-        エスケープ不要)を採用した。
+        【2026-09 実機ビルドで判明した修正】
+        1. FFmpegには `-zmq_bind_addr` というグローバルCLIオプションは存在
+           しない(起動直後に`Unrecognized option`で失敗する)。`zmq`フィルタは
+           filter_complex内にフィルタノードとして組み込む必要がある
+           (FFmpeg公式ドキュメントのzmq/azmqフィルタ仕様に準拠)。
+        2. `zmq`フィルタの`bind_address`オプションにアドレスを明示指定する際、
+           バックスラッシュエスケープ(`tcp\\://...\\:5555`)・シングルクォート
+           (`bind_address='tcp://...'`)のいずれの方法でも、FFmpegの
+           フィルタグラフ構文解析が`:`をオプション区切りとして扱ってしまい
+           `[AVFilterGraph] No option name near '//...'`で失敗することを実機で
+           確認した(FFmpeg 7.0.3で検証。既知のエスケープの複雑さに起因する
+           もので、本プロジェクト固有のバグではない可能性が高い)。
+           `zmq`フィルタのコンパイル時デフォルト値が`tcp://*:5555`
+           (libavfilter/f_zmq.c参照)であり、ちょうど本システムが使いたい
+           5555番ポートと一致するため、`bind_address`オプションを一切指定せず
+           デフォルトのまま`zmq`フィルタを裸で追加する方式に変更し、
+           エスケープ問題そのものを回避した。`compositor/zmqctl.py`の
+           接続先(`tcp://127.0.0.1:5555`)は、`tcp://*:5555`でbindされた
+           ソケットへループバック経由で問題なく接続できる。
         """
         parts = []
         # 各入力を1920x1080相当のハーフサイズにスケールして2x2に並べる
@@ -110,12 +114,12 @@ class DisplayModeController:
             "[single0][single1][single2][single3]"
             "overlay@quad2=x=0:y=0:enable=0[singleout]"
         )
-        if zmq_bind_addr:
+        if enable_zmq:
             parts.append(
                 f"[quadout]drawtext@alarm=text='{alarm_text}':"
                 "fontcolor=red:fontsize=48:x=(w-text_w)/2:y=h-100:enable=0[vout_pre]"
             )
-            parts.append(f"[vout_pre]zmq=bind_address='{zmq_bind_addr}'[vout]")
+            parts.append("[vout_pre]zmq[vout]")
         else:
             parts.append(
                 f"[quadout]drawtext@alarm=text='{alarm_text}':"
