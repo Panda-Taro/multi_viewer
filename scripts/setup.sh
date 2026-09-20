@@ -72,6 +72,9 @@ build_components() {
   log "MTL/DPDKをビルド (時間がかかります)"
   bash "${REPO_ROOT}/mtl/scripts/build_mtl.sh"
 
+  log "FFmpeg(MTL連携プラグイン組み込み)をビルド (時間がかかります)"
+  bash "${REPO_ROOT}/mtl/scripts/build_ffmpeg.sh"
+
   log "nmos-cppをビルド"
   bash "${REPO_ROOT}/nmos/scripts/build_nmos_cpp.sh"
 

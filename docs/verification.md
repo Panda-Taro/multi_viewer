@@ -6,6 +6,12 @@ NMOSコントローラ/レジストリ・iPad)が揃った環境で、実装済�
 
 ## 1. ST2110-20 4系統受信 + ST2022-7冗長
 
+> **注記**: `sudo ./scripts/setup.sh` 直後、`multiviewer-mtl-rx`/
+> `multiviewer-compositor` は実NIC・実Receiver設定が未投入のため
+> `invalid num_ports 0` 等のエラーで再起動を繰り返す(`Restart=on-failure`
+> により3秒毎)。これは想定内の「未設定状態」であり、手順2でWebGUI/NMOSから
+> 実際の設定を投入すると解消される見込み(要実機確認)。
+
 1. `sudo ./scripts/setup.sh` を対象機で実行し、全systemdサービスを起動。
 2. `/mgmt/` の「メディアストリーム設定」で4つの映像Receiverにテスト用送出機材の
    Source IP/マルチキャストアドレス/ポート/ペイロードIDを設定 (またはNMOSコントローラ

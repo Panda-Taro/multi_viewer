@@ -17,7 +17,7 @@
   "is04_versions": ["v1.1", "v1.2", "v1.3"],
   "is05_versions": ["v1.0", "v1.1"],
 
-  "seed_id": "multiviewer-node-0000-0000-000000000001",
+  "seed_id": "5f3e6e2a-6b1a-4c9e-8a2d-000000000001",
   "pri": 100,
 
   "allow_invalid_resources": false,

@@ -112,3 +112,25 @@ clone・grepして確認の上で修正):
   不十分で、実際に対象リポジトリをcloneしてソースを確認しないと動作しない
   コードになりやすい。今回は全て実機ビルドのフィードバックと実ソース確認に
   より修正した。
+- **FFmpegビルド手順の欠落**: `scripts/setup.sh`のbuild_components()に
+  FFmpeg(MTL連携プラグイン組み込み)のビルド手順が元々欠落しており、
+  `multiviewer-compositor.service`が「ffmpegが見つかりません」で起動に
+  失敗していた。MTL公式の`ecosystem/ffmpeg_plugin/build.sh`のロジックを
+  参考に`mtl/scripts/build_ffmpeg.sh`を新規追加し、要件⑥-4-3(H.264)・
+  ⑥-4-4(Opus)を満たすため`--enable-gpl --enable-libx264 --enable-libopus`を
+  追加で有効化した(公式スクリプトはlibopenh264のみを想定しており、そのままでは
+  libx264/opusが有効にならないため)。
+- **nmos-cpp seed_idのUUID形式不正**: `nmos/config/node_config.json`の
+  `seed_id`が`nmos-cpp`のJSONスキーマ検証(UUID形式必須の正規表現)に
+  違反しており、`multiviewer-nmos-node.service`が起動直後に
+  `JSON error: schema validation failed at /seed_id`で即終了していた。
+  実在するUUID形式の値に修正した。
+- **mtl-rxの起動待ちループは仕様通り(バグではない)**: `RxTxApp`は
+  `mtl_init()`の時点でインターフェース(実NICのPCI/AF_XDPポート名)と
+  少なくとも1つの有効なRx/Txセッションを要求するため、WebGUIやNMOSで
+  実際のNIC情報・Receiver設定が投入されるまでは
+  `invalid num_ports 0`/`can not parse ip array for rx`等のエラーで
+  起動に失敗し続ける。systemdの`Restart=on-failure`(3秒間隔)により
+  静かにリトライを続ける設計とし、これは実機での運用開始(WebGUIでの
+  NIC/Receiver設定)によって解消される想定の「未設定状態」であり、
+  コード上の不具合ではない。実機検証手順は`docs/verification.md`参照。
