@@ -35,6 +35,7 @@
 
 #include "node_implementation.h"
 
+#include "cpprest/host_utils.h" // for web::hosts::experimental::host_interface (full definition; nmos/settings.h etc. only forward-declare it)
 #include "cpprest/http_client.h"
 #include "cpprest/json.h"
 #include "nmos/capabilities.h"
