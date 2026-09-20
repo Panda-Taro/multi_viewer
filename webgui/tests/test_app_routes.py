@@ -63,10 +63,12 @@ def test_media_video_update_then_reflected_on_page():
         "/mgmt/media/video/0",
         data={
             "enabled": "true",
-            "source_ip": "192.168.1.10",
+            "source_ip_amber": "192.168.1.10",
             "multicast_group_amber": "239.1.1.10",
+            "port_amber": "20000",
+            "source_ip_blue": "192.168.2.10",
             "multicast_group_blue": "",
-            "port": "20000",
+            "port_blue": "0",
             "payload_type": "112",
             "video_format_mode": "sdp",
         },
@@ -75,6 +77,7 @@ def test_media_video_update_then_reflected_on_page():
     assert r.status_code == 303
     page = client.get("/mgmt/media")
     assert "239.1.1.10" in page.text
+    assert "192.168.2.10" in page.text
 
 
 def test_media_video_disable_toggle_shows_unchecked_and_excludes_session():
@@ -83,7 +86,7 @@ def test_media_video_disable_toggle_shows_unchecked_and_excludes_session():
         data={
             "enabled": "true",
             "multicast_group_amber": "239.1.1.11",
-            "port": "20001",
+            "port_amber": "20001",
             "video_format_mode": "sdp",
         },
         follow_redirects=False,
@@ -93,7 +96,7 @@ def test_media_video_disable_toggle_shows_unchecked_and_excludes_session():
         data={
             # enabled チェックボックス未送信 = 無効化
             "multicast_group_amber": "239.1.1.11",
-            "port": "20001",
+            "port_amber": "20001",
             "video_format_mode": "sdp",
         },
         follow_redirects=False,

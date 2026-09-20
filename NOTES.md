@@ -282,3 +282,32 @@ clone・grepして確認の上で修正):
 - C++側の変更(`multiviewer_node_implementation.cpp`)は、本サンドボックス
   ではnmos-cpp実体をビルドできないため(DPDK/AF_XDP同様、既存のNOTES.md
   記載の制約と同じ)コンパイル未検証。実機ビルドでの確認が必要。
+
+## 2026-09 メディアストリーム設定画面の再レイアウト + Amber/Blue項目の独立化
+
+ユーザーからのフィードバック(スクロールなしで5ペイン全て視認できるように、
+Amber/Blueそれぞれに独立したSource IP/ポート欄を設ける)を受けて再修正した。
+
+- `mtl/rxctl.py`の`VideoReceiverConfig`/`AudioReceiverConfig`から共有の
+  `source_ip`/`port`フィールドを廃止し、`source_ip_amber`/`port_amber`/
+  `source_ip_blue`/`port_blue`に分離した。ST2022-7では冗長化されたSender側も
+  Amber/Blueの2物理IFから別々に送出するため、Source IP・ポートがAmber/Blueで
+  異なりうる、という実際のSMPTE 2022-7の性質に合わせた(要件のGUI項目定義
+  通り「Amber（ソースIPアドレス、マルチキャストグループアドレス、ポート番号）」
+  「Blue（同）」がそれぞれ独立した項目であることに対応)。
+  - Amber側のみ、IS-05 activateで得たSDPから自動反映される(従来通り)。
+  - Blue側は要件通り手打ちのみ(自動反映元がない。ST2022-7の2経路目は
+    NMOS SDPからは1系統分の情報しか得られないため)。
+  - MTL RxTxAppの1 rx_session構成は`start_port`を1つしか持てないため、
+    `to_mtl_json()`は`port_amber`を採用値とする(`port_blue`が異なっていても
+    現状のRxTxApp連携では反映されない。要実機検証、非対称ポートが実際に
+    必要な場合は別途MTL側の対応調査が必要)。
+- `webgui/app/templates/media.html`を、Grafana/Zabbix的な密度優先の
+  グリッドレイアウトに全面刷新した。5ペイン(映像Receiver x4、音声Receiver x1)
+  を`display: grid`(3列、狭幅では2列に自動収縮)で並べ、各ペイン内は
+  ラベル+入力を横一列にした`field-row`で構成することで、1画面(概ねフルHD
+  相当の解像度)でスクロールなしに全ペインを視認できるようにした
+  (`webgui/app/static/css/style.css`の`.media-grid`/`.receiver-pane`/
+  `.field-row`)。狭い/低解像度な環境では依然としてブラウザ側のズームや
+  ウィンドウ幅次第でスクロールが発生しうるが、要件が想定するデスクトップ
+  ブラウザでの利用では収まる設計とした。

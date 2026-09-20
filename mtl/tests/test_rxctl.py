@@ -34,7 +34,7 @@ def test_apply_sdp_video_updates_target_receiver_only():
     cfg = RxSystemConfig()
     cfg.apply_sdp("video", 2, FakeSdp(multicast_group="239.9.9.9", port=30000))
     assert cfg.videos[2].multicast_group_amber == "239.9.9.9"
-    assert cfg.videos[2].port == 30000
+    assert cfg.videos[2].port_amber == 30000
     # other receivers untouched
     assert cfg.videos[0].multicast_group_amber == ""
 
@@ -120,7 +120,7 @@ def test_set_enabled_false_excludes_from_mtl_json_but_keeps_settings():
 
     assert cfg.videos[0].enabled is False
     assert cfg.videos[0].multicast_group_amber == "239.1.1.10"
-    assert cfg.videos[0].port == 20000
+    assert cfg.videos[0].port_amber == 20000
     assert cfg.to_mtl_json()["rx_sessions"] == []
 
 
@@ -189,3 +189,30 @@ def test_audio_sampling_and_ptime_mode_manual_not_overwritten_by_sdp():
     cfg.apply_sdp("audio", 0, FakeSdp(sample_rate=96000, packet_time_ms=1.0))
     assert cfg.audio.sample_rate == 48000
     assert cfg.audio.packet_time_ms == 0.125
+
+
+def test_video_amber_blue_are_independent_fields():
+    """④-8-4-2-1-1-2/3: Amber/Blueは独立したソースIP・ポートを持てる。"""
+    cfg = RxSystemConfig()
+    cfg.apply_sdp("video", 0, FakeSdp(source_ip="192.168.1.10", multicast_group="239.1.1.10", port=20000))
+    cfg.videos[0].source_ip_blue = "192.168.2.10"
+    cfg.videos[0].multicast_group_blue = "239.2.1.10"
+    cfg.videos[0].port_blue = 21000
+
+    assert cfg.videos[0].source_ip_amber == "192.168.1.10"
+    assert cfg.videos[0].port_amber == 20000
+    assert cfg.videos[0].source_ip_blue == "192.168.2.10"
+    assert cfg.videos[0].port_blue == 21000
+    # SDP(Amber)適用はBlue側の手打ち値に影響しない
+    assert cfg.videos[0].multicast_group_blue == "239.2.1.10"
+
+
+def test_audio_amber_blue_are_independent_fields():
+    cfg = RxSystemConfig()
+    cfg.apply_sdp("audio", 0, FakeSdp(source_ip="192.168.1.20", multicast_group="239.1.1.20", port=20100))
+    cfg.audio.source_ip_blue = "192.168.2.20"
+    cfg.audio.port_blue = 21100
+
+    assert cfg.audio.source_ip_amber == "192.168.1.20"
+    assert cfg.audio.source_ip_blue == "192.168.2.20"
+    assert cfg.audio.port_blue == 21100

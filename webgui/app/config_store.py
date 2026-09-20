@@ -141,8 +141,9 @@ class ConfigStore:
 
         if target.video_format_mode not in VIDEO_FORMAT_MODES:
             raise ConfigValidationError(f"不明な映像フォーマットモード: {target.video_format_mode}")
-        if target.port and not (0 < target.port < 65536):
-            raise ConfigValidationError(f"portは1-65535の範囲でなければならない: {target.port}")
+        for label, port in (("port_amber", target.port_amber), ("port_blue", target.port_blue)):
+            if port and not (0 < port < 65536):
+                raise ConfigValidationError(f"{label}は1-65535の範囲でなければならない: {port}")
 
         target.apply_format_mode()
         self._media = working_copy
@@ -160,8 +161,9 @@ class ConfigStore:
             raise ConfigValidationError(f"不明な音声サンプリングモード: {target.sampling_mode}")
         if target.ptime_mode not in AUDIO_PTIME_MODES:
             raise ConfigValidationError(f"不明なパケットインターバルモード: {target.ptime_mode}")
-        if target.port and not (0 < target.port < 65536):
-            raise ConfigValidationError(f"portは1-65535の範囲でなければならない: {target.port}")
+        for label, port in (("port_amber", target.port_amber), ("port_blue", target.port_blue)):
+            if port and not (0 < port < 65536):
+                raise ConfigValidationError(f"{label}は1-65535の範囲でなければならない: {port}")
 
         target.apply_format_mode()
         self._media = working_copy

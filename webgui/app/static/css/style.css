@@ -113,6 +113,77 @@ form.settings-form button {
   width: fit-content;
 }
 
+/* ④-8-4-2: メディアストリーム設定。5ペイン(映像x4+音声x1)をスクロールなしで
+   1画面に収めるための密度優先グリッドレイアウト。 */
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 1400px) {
+  .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.receiver-pane {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+.receiver-pane h3 { margin: 0 0 4px; font-size: 13px; color: var(--accent); }
+
+.receiver-pane .field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.receiver-pane .field-row label {
+  flex: 0 0 128px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.receiver-pane .field-row input,
+.receiver-pane .field-row select {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.receiver-pane .field-row input[type="checkbox"] { flex: 0 0 auto; width: 16px; height: 16px; }
+
+.receiver-pane .leg-divider {
+  margin-top: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+}
+
+.receiver-pane .hint { margin: 0; font-size: 10px; }
+
+.receiver-pane button {
+  margin-top: 8px;
+  background: var(--accent);
+  border: none;
+  color: #111;
+  font-weight: bold;
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  width: fit-content;
+  font-size: 12px;
+}
+
 .alert-error { background: #3a1f1f; border: 1px solid var(--error); color: #ffb3ab; padding: 10px 14px; border-radius: 4px; margin-bottom: 16px; }
 .alert-notice { background: #1f2f3a; border: 1px solid #3aa0e0; color: #b7dcff; padding: 10px 14px; border-radius: 4px; margin-bottom: 16px; }
 

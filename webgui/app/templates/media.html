@@ -3,57 +3,60 @@
 <h1>メディアストリーム設定</h1>
 {% if error %}<div class="alert-error">保存に失敗しました: {{ error }} (前の設定を維持しています)</div>{% endif %}
 
-<h2>映像Receiver (4系統)</h2>
-{% for v in videos %}
-<form class="settings-form" method="post" action="/mgmt/media/video/{{ loop.index0 }}">
-  <strong>Video Receiver {{ loop.index }}</strong>
-  <label><input type="checkbox" name="enabled" value="true" {{ 'checked' if v.enabled }}> 有効</label>
-  <label>ペイロードID</label>
-  <input type="number" name="payload_type" value="{{ v.payload_type }}">
-  <label>映像フォーマット</label>
-  <select name="video_format_mode">
-    <option value="sdp" {{ 'selected' if v.video_format_mode == 'sdp' }}>SDP (NMOSから自動反映)</option>
-    <option value="59i" {{ 'selected' if v.video_format_mode == '59i' }}>59i (1920x1080 59.94i 固定)</option>
-    <option value="59p" {{ 'selected' if v.video_format_mode == '59p' }}>59p (1920x1080 59.94p 固定)</option>
-  </select>
-  <p class="hint">現在の適用値: {{ v.video_format }} / {{ v.pg_format }}</p>
-  <label>Source IP</label>
-  <input type="text" name="source_ip" value="{{ v.source_ip }}">
-  <label>マルチキャストグループ (Amber)</label>
-  <input type="text" name="multicast_group_amber" value="{{ v.multicast_group_amber }}">
-  <label>ポート (Amber)</label>
-  <input type="number" name="port" value="{{ v.port }}">
-  <label>マルチキャストグループ (Blue)</label>
-  <input type="text" name="multicast_group_blue" value="{{ v.multicast_group_blue }}">
-  <button type="submit">保存</button>
-</form>
-{% endfor %}
+{% macro leg_fields(prefix, source_ip, multicast_group, port) %}
+  <div class="field-row"><label>Source IP ({{ prefix }})</label><input type="text" name="source_ip_{{ prefix|lower }}" value="{{ source_ip }}"></div>
+  <div class="field-row"><label>マルチキャストGrp ({{ prefix }})</label><input type="text" name="multicast_group_{{ prefix|lower }}" value="{{ multicast_group }}"></div>
+  <div class="field-row"><label>ポート ({{ prefix }})</label><input type="number" name="port_{{ prefix|lower }}" value="{{ port }}"></div>
+{% endmacro %}
 
-<h2>音声Receiver (1系統, ch1/2のみ使用)</h2>
-<form class="settings-form" method="post" action="/mgmt/media/audio">
-  <label><input type="checkbox" name="enabled" value="true" {{ 'checked' if audio.enabled }}> 有効</label>
-  <label>ペイロードID</label>
-  <input type="number" name="payload_type" value="{{ audio.payload_type }}">
-  <label>サンプリング</label>
-  <select name="sampling_mode">
-    <option value="sdp" {{ 'selected' if audio.sampling_mode == 'sdp' }}>SDP (NMOSから自動反映)</option>
-    <option value="48khz" {{ 'selected' if audio.sampling_mode == '48khz' }}>48kHz 固定</option>
-  </select>
-  <label>パケットインターバル</label>
-  <select name="ptime_mode">
-    <option value="sdp" {{ 'selected' if audio.ptime_mode == 'sdp' }}>SDP (NMOSから自動反映)</option>
-    <option value="1ms" {{ 'selected' if audio.ptime_mode == '1ms' }}>1ms 固定</option>
-    <option value="0.125ms" {{ 'selected' if audio.ptime_mode == '0.125ms' }}>0.125ms 固定</option>
-  </select>
-  <p class="hint">現在の適用値: {{ audio.sample_rate }} Hz / {{ audio.packet_time_ms }} ms</p>
-  <label>Source IP</label>
-  <input type="text" name="source_ip" value="{{ audio.source_ip }}">
-  <label>マルチキャストグループ (Amber)</label>
-  <input type="text" name="multicast_group_amber" value="{{ audio.multicast_group_amber }}">
-  <label>ポート (Amber)</label>
-  <input type="number" name="port" value="{{ audio.port }}">
-  <label>マルチキャストグループ (Blue)</label>
-  <input type="text" name="multicast_group_blue" value="{{ audio.multicast_group_blue }}">
-  <button type="submit">保存</button>
-</form>
+<div class="media-grid">
+  {% for v in videos %}
+  <form class="receiver-pane" method="post" action="/mgmt/media/video/{{ loop.index0 }}">
+    <h3>Video Receiver {{ loop.index }}</h3>
+    <div class="field-row"><label>有効</label><input type="checkbox" name="enabled" value="true" {{ 'checked' if v.enabled }}></div>
+    <div class="field-row"><label>ペイロードID</label><input type="number" name="payload_type" value="{{ v.payload_type }}"></div>
+    <div class="field-row">
+      <label>映像フォーマット</label>
+      <select name="video_format_mode">
+        <option value="sdp" {{ 'selected' if v.video_format_mode == 'sdp' }}>SDP自動</option>
+        <option value="59i" {{ 'selected' if v.video_format_mode == '59i' }}>59i固定</option>
+        <option value="59p" {{ 'selected' if v.video_format_mode == '59p' }}>59p固定</option>
+      </select>
+    </div>
+    <p class="hint">適用値: {{ v.video_format }} / {{ v.pg_format }}</p>
+    <div class="leg-divider">Amber</div>
+    {{ leg_fields("Amber", v.source_ip_amber, v.multicast_group_amber, v.port_amber) }}
+    <div class="leg-divider">Blue</div>
+    {{ leg_fields("Blue", v.source_ip_blue, v.multicast_group_blue, v.port_blue) }}
+    <button type="submit">保存</button>
+  </form>
+  {% endfor %}
+
+  <form class="receiver-pane" method="post" action="/mgmt/media/audio">
+    <h3>Audio Receiver 1 (ch1/2)</h3>
+    <div class="field-row"><label>有効</label><input type="checkbox" name="enabled" value="true" {{ 'checked' if audio.enabled }}></div>
+    <div class="field-row"><label>ペイロードID</label><input type="number" name="payload_type" value="{{ audio.payload_type }}"></div>
+    <div class="field-row">
+      <label>サンプリング周波数</label>
+      <select name="sampling_mode">
+        <option value="sdp" {{ 'selected' if audio.sampling_mode == 'sdp' }}>SDP自動</option>
+        <option value="48khz" {{ 'selected' if audio.sampling_mode == '48khz' }}>48kHz固定</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <label>パケットインターバル</label>
+      <select name="ptime_mode">
+        <option value="sdp" {{ 'selected' if audio.ptime_mode == 'sdp' }}>SDP自動</option>
+        <option value="1ms" {{ 'selected' if audio.ptime_mode == '1ms' }}>1ms固定</option>
+        <option value="0.125ms" {{ 'selected' if audio.ptime_mode == '0.125ms' }}>0.125ms固定</option>
+      </select>
+    </div>
+    <p class="hint">適用値: {{ audio.sample_rate }} Hz / {{ audio.packet_time_ms }} ms</p>
+    <div class="leg-divider">Amber</div>
+    {{ leg_fields("Amber", audio.source_ip_amber, audio.multicast_group_amber, audio.port_amber) }}
+    <div class="leg-divider">Blue</div>
+    {{ leg_fields("Blue", audio.source_ip_blue, audio.multicast_group_blue, audio.port_blue) }}
+    <button type="submit">保存</button>
+  </form>
+</div>
 {% endblock %}

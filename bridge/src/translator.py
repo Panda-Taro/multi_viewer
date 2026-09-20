@@ -115,7 +115,7 @@ def apply_deactivate_request(
     target = config.receiver_by_kind(kind, index)
     leave_request = IgmpJoinRequest(
         multicast_group=target.multicast_group_amber,
-        source_ip=target.source_ip,
+        source_ip=target.source_ip_amber,
     )
     config.set_enabled(kind, index, False)
     return config, leave_request
@@ -137,6 +137,6 @@ def apply_enable_request(
     config.set_enabled(kind, index, True)
     join_request = IgmpJoinRequest(
         multicast_group=target.multicast_group_amber,
-        source_ip=target.source_ip,
+        source_ip=target.source_ip_amber,
     )
     return config, join_request

@@ -15,7 +15,7 @@ def test_default_media_has_4_video_1_audio():
 
 def test_update_video_receiver_valid():
     store = ConfigStore()
-    alarm = store.update_video_receiver(0, multicast_group_amber="239.1.1.10", port=20000)
+    alarm = store.update_video_receiver(0, multicast_group_amber="239.1.1.10", port_amber=20000)
     assert store.media.videos[0].multicast_group_amber == "239.1.1.10"
     assert alarm is None
 
@@ -23,18 +23,26 @@ def test_update_video_receiver_valid():
 def test_update_video_receiver_invalid_index_raises_and_keeps_state():
     store = ConfigStore()
     with pytest.raises(ConfigValidationError):
-        store.update_video_receiver(9, port=1)
+        store.update_video_receiver(9, port_amber=1)
     assert store.media.videos[0].multicast_group_amber == ""
 
 
 def test_update_video_receiver_invalid_port_keeps_previous_value():
     store = ConfigStore()
-    store.update_video_receiver(0, multicast_group_amber="239.1.1.10", port=20000)
+    store.update_video_receiver(0, multicast_group_amber="239.1.1.10", port_amber=20000)
     with pytest.raises(ConfigValidationError):
-        store.update_video_receiver(0, multicast_group_amber="239.9.9.9", port=99999)
+        store.update_video_receiver(0, multicast_group_amber="239.9.9.9", port_amber=99999)
     # 保存失敗時は前の値を維持する (④-8要件)
     assert store.media.videos[0].multicast_group_amber == "239.1.1.10"
-    assert store.media.videos[0].port == 20000
+    assert store.media.videos[0].port_amber == 20000
+
+
+def test_update_video_receiver_invalid_blue_port_keeps_previous_value():
+    store = ConfigStore()
+    store.update_video_receiver(0, multicast_group_blue="239.9.9.10", port_blue=20001)
+    with pytest.raises(ConfigValidationError):
+        store.update_video_receiver(0, port_blue=99999)
+    assert store.media.videos[0].port_blue == 20001
 
 
 def test_update_video_receiver_unknown_field_rejected():
@@ -46,8 +54,8 @@ def test_update_video_receiver_unknown_field_rejected():
 def test_format_alarm_triggered_after_4th_mismatched_receiver():
     store = ConfigStore()
     for i in range(3):
-        store.update_video_receiver(i, multicast_group_amber=f"239.1.1.{i}", port=20000 + i, video_format="i1080p59")
-    alarm = store.update_video_receiver(3, multicast_group_amber="239.1.1.9", port=20009, video_format="p2160p59")
+        store.update_video_receiver(i, multicast_group_amber=f"239.1.1.{i}", port_amber=20000 + i, video_format="i1080p59")
+    alarm = store.update_video_receiver(3, multicast_group_amber="239.1.1.9", port_amber=20009, video_format="p2160p59")
     assert alarm == "映像フォーマットが4系統で非統一です"
 
 
@@ -109,7 +117,7 @@ def test_nic_settings_requires_cidr():
 
 def test_set_receiver_enabled_false_keeps_settings():
     store = ConfigStore()
-    store.update_video_receiver(0, multicast_group_amber="239.1.1.10", port=20000)
+    store.update_video_receiver(0, multicast_group_amber="239.1.1.10", port_amber=20000)
     store.set_receiver_enabled("video", 0, False)
     assert store.media.videos[0].enabled is False
     assert store.media.videos[0].multicast_group_amber == "239.1.1.10"  # 設定値は保持
@@ -117,7 +125,7 @@ def test_set_receiver_enabled_false_keeps_settings():
 
 def test_set_receiver_enabled_true_restores_mtl_session():
     store = ConfigStore()
-    store.update_video_receiver(0, multicast_group_amber="239.1.1.10", port=20000)
+    store.update_video_receiver(0, multicast_group_amber="239.1.1.10", port_amber=20000)
     store.set_receiver_enabled("video", 0, False)
     store.set_receiver_enabled("video", 0, True)
     assert any(s["ip"][0] == "239.1.1.10" for s in store.media.to_mtl_json()["rx_sessions"])

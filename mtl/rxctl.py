@@ -51,17 +51,23 @@ class VideoReceiverConfig:
 
     index: int  # 0-3
     enabled: bool = True  # WebGUIトグル / IS-05 master_enable と一本化される内部状態
-    source_ip: str = ""
-    multicast_group_amber: str = ""
-    multicast_group_blue: str = ""
-    port: int = 0
     payload_type: int = 112
     video_format_mode: str = "sdp"  # "sdp" | "59i" | "59p" (④-8-4-2-1-1-1)
     video_format: str = DEFAULT_VIDEO_FORMAT
     pg_format: str = DEFAULT_PG_FORMAT
+    # 要件④-8-4-2-1-1-2/3: Amber/Blueは独立したソースIP・マルチキャストグループ・
+    # ポートを持つ(ST2022-7では冗長化されたSender側も2系統の物理IFから別々に
+    # 送出するため、Amber/Blueで値が異なりうる)。Amberのみ、IS-05 activateで
+    # 得たSDPにより自動反映される(apply_sdp参照)。Blueは手打ちのみ。
+    source_ip_amber: str = ""
+    multicast_group_amber: str = ""
+    port_amber: int = 0
+    source_ip_blue: str = ""
+    multicast_group_blue: str = ""
+    port_blue: int = 0
 
     def is_configured(self) -> bool:
-        return bool(self.multicast_group_amber and self.port)
+        return bool(self.multicast_group_amber and self.port_amber)
 
     def is_active(self) -> bool:
         """無効化中はソースIP等の設定値を保持したままRxセッションには含めない。"""
@@ -79,19 +85,24 @@ class AudioReceiverConfig:
     """音声Receiver設定 (④-2)。ch1/2のみ使用。"""
 
     enabled: bool = True  # WebGUIトグル / IS-05 master_enable と一本化される内部状態
-    source_ip: str = ""
-    multicast_group_amber: str = ""
-    multicast_group_blue: str = ""
-    port: int = 0
     payload_type: int = 111
     sampling_mode: str = "sdp"  # "sdp" | "48khz" (④-8-4-2-1-2-1)
     sample_rate: int = 48000
     ptime_mode: str = "sdp"  # "sdp" | "1ms" | "0.125ms" (④-8-4-2-1-2-1)
     packet_time_ms: float = 1.0  # 1ms既定、SDPで125usが指定される場合あり
     channels: int = 2  # ch1/2固定。3以上が来ても常に2に丸める (要件④-2)
+    # 要件④-8-4-2-1-2-2/3: Amber/Blueは独立したソースIP・マルチキャストグループ・
+    # ポートを持つ。Amberのみ、IS-05 activateで得たSDPにより自動反映される。
+    # Blueは手打ちのみ。
+    source_ip_amber: str = ""
+    multicast_group_amber: str = ""
+    port_amber: int = 0
+    source_ip_blue: str = ""
+    multicast_group_blue: str = ""
+    port_blue: int = 0
 
     def is_configured(self) -> bool:
-        return bool(self.multicast_group_amber and self.port)
+        return bool(self.multicast_group_amber and self.port_amber)
 
     def is_active(self) -> bool:
         """無効化中はソースIP等の設定値を保持したままRxセッションには含めない。"""
@@ -167,6 +178,13 @@ class RxSystemConfig:
         ソース上見当たらず(tests/tools/RxTxApp配下に"domain"文字列が一切ない)、
         ここでの"ptp"ブロックは実際には読まれない可能性が高い。実機でのPTP
         ドメイン設定方法は要調査 (docs/verification.md参照)。
+
+        【既知の制約】要件④-8-4-2-1-1-2/3によりAmber/Blueは独立したポート
+        番号を持てるが、RxTxAppの1 rx_session構成は"start_port"を1つしか
+        持たない(tests/tools/RxTxApp/src/parse_json.c参照)。このため
+        port_amberを採用値とし、port_blueが異なる場合はport_amberに揃える
+        (要実機検証: 非対称ポート構成が必要な場合はrx_sessionを分割する等
+        MTL側の追加対応が要る)。
         """
         rx_sessions = []
         for v in self.videos:
@@ -179,7 +197,7 @@ class RxSystemConfig:
                     "video": [
                         {
                             "type": "frame",
-                            "start_port": v.port,
+                            "start_port": v.port_amber,
                             "payload_type": v.payload_type,
                             "video_format": v.video_format,
                             "pg_format": v.pg_format,
@@ -199,7 +217,7 @@ class RxSystemConfig:
                     "audio": [
                         {
                             "type": "frame",
-                            "start_port": self.audio.port,
+                            "start_port": self.audio.port_amber,
                             "payload_type": self.audio.payload_type,
                             "audio_format": "PCM24",
                             "audio_channel": ["U02"],
@@ -229,9 +247,9 @@ class RxSystemConfig:
                 raise ConfigValidationError(f"映像Receiver index範囲外: {index}")
             target = self.videos[index]
             target.enabled = True  # activate(master_enable=true)によるSDP適用は有効化を意味する
-            target.source_ip = sdp.source_ip
+            target.source_ip_amber = sdp.source_ip
             target.multicast_group_amber = sdp.multicast_group
-            target.port = sdp.port
+            target.port_amber = sdp.port
             target.payload_type = sdp.payload_type
             # ④-8-4-2-1-1-1: video_format_modeが"59i"/"59p"の手動固定時は、
             # SDPが指定する値で上書きしない。
@@ -244,9 +262,9 @@ class RxSystemConfig:
                 target.apply_format_mode()
         elif receiver_kind == "audio":
             self.audio.enabled = True  # activate(master_enable=true)によるSDP適用は有効化を意味する
-            self.audio.source_ip = sdp.source_ip
+            self.audio.source_ip_amber = sdp.source_ip
             self.audio.multicast_group_amber = sdp.multicast_group
-            self.audio.port = sdp.port
+            self.audio.port_amber = sdp.port
             self.audio.payload_type = sdp.payload_type
             # ④-8-4-2-1-2-1: sampling_mode/ptime_modeが手動固定時はSDPで上書きしない。
             if self.audio.sampling_mode == "sdp" and sdp.sample_rate:

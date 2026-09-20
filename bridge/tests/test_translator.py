@@ -63,7 +63,7 @@ def test_apply_activate_updates_correct_video_receiver():
         cfg, "video-receiver-1", _video_sdp(10)
     )
     assert cfg.videos[0].multicast_group_amber == "239.1.1.10"
-    assert cfg.videos[0].port == 20010
+    assert cfg.videos[0].port_amber == 20010
     assert alarm is None  # only 1 configured, no mismatch yet
     assert len(joins) == 1
     assert joins[0].multicast_group == "239.1.1.10"
@@ -120,7 +120,7 @@ def test_apply_deactivate_disables_but_keeps_settings():
 
     assert cfg.videos[0].enabled is False
     assert cfg.videos[0].multicast_group_amber == "239.1.1.10"  # 設定値は保持
-    assert cfg.videos[0].port == 20010
+    assert cfg.videos[0].port_amber == 20010
     assert leave_request.multicast_group == "239.1.1.10"
 
 
