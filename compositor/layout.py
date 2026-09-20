@@ -6,6 +6,24 @@ FFmpegプロセスを再起動せずに1秒以内で表示モードを切り替�
 「常時4分割+シングルの両レイアウトを構築しておき、enable式をzmq経由で
 切り替える」という設計 (README.md参照) のロジック部分。
 ハードウェア/FFmpegバイナリに依存しないため、pytestで完全にテストできる。
+
+【2026-09 実機ビルドで判明したフィルタグラフ設計の修正】
+当初の実装には以下2つの構造的な誤りがあり、実機で
+`Timeline ('enable' option) not supported with filter 'crop'` および
+(修正後に判明したはずの) overlayフィルタへの入力過多という2つの問題が
+あった。
+1. `crop` フィルタは `enable` (timeline) オプションに対応していない
+   (FFmpeg 7.0.3で実機確認)。ランタイムでの表示/非表示切替には
+   `overlay` フィルタ(timeline対応)のみを使う設計に変更した。
+2. `overlay` フィルタは入力を厳密に2つ(base + overlay)しか取れないため、
+   `[single0][single1][single2][single3]overlay@quad2=...` のように
+   4入力を1つのoverlayに渡す記述は構文として成立しない。また
+   `[quadbase]overlay@quad=...[quadout]` も入力が1つしかなく無効だった。
+   正しくは、(a) 4分割合成(quadout)はhstack/vstackの結果をそのまま使い
+   overlay不要、(b) シングル表示(singleout)は黒背景に対しoverlay0..3を
+   順にチェーンし、選択中の1本だけenable=1にする、(c) 最後にquadoutと
+   singleoutを1つのoverlay(2入力)で合成し、そのenableで表示モードを
+   切り替える、という3段構成に書き直した。
 """
 from __future__ import annotations
 
@@ -59,14 +77,20 @@ class DisplayModeController:
 
         コマンド形式は FFmpeg `zmq` フィルタの仕様
         (`<filter_name>@<index> <option> <value>`) に準拠。
+
+        フィルタ構成 (build_filter_complex参照):
+          - `overlay@single0`..`overlay@single3`: シングル表示ブランチで
+            どの入力を黒背景に重ねるかを個別に選択 (同時に有効なのは高々1つ)。
+          - `overlay@mode`: 4分割(quadout)の上にシングル映像(singleout)を
+            重ねるかどうかで表示モードを切り替える。
+          - `drawtext@alarm`: フォーマット不統一アラームのOSD表示。
         """
         cmds = []
-        quad_enable = "1" if self.mode == DisplayMode.QUAD else "0"
-        single_enable = "1" if self.mode == DisplayMode.SINGLE else "0"
-        cmds.append(f"overlay@quad enable {quad_enable}")
+        mode_enable = "1" if self.mode == DisplayMode.SINGLE else "0"
+        cmds.append(f"overlay@mode enable {mode_enable}")
         for i in range(4):
             en = "1" if (self.mode == DisplayMode.SINGLE and i == self.selected_index) else "0"
-            cmds.append(f"crop@single{i} enable {en}")
+            cmds.append(f"overlay@single{i} enable {en}")
         cmds.append(f"drawtext@alarm enable {'1' if self.format_alarm else '0'}")
         return cmds
 
@@ -76,53 +100,54 @@ class DisplayModeController:
         入力: [0:v][1:v][2:v][3:v] (4映像), 出力ラベル [vout]
         4分割は2x2 (0=左上,1=右上,2=左下,3=右下) と決定 (NOTES.md参照)。
 
-        【2026-09 実機ビルドで判明した修正】
-        1. FFmpegには `-zmq_bind_addr` というグローバルCLIオプションは存在
-           しない(起動直後に`Unrecognized option`で失敗する)。`zmq`フィルタは
-           filter_complex内にフィルタノードとして組み込む必要がある
-           (FFmpeg公式ドキュメントのzmq/azmqフィルタ仕様に準拠)。
-        2. `zmq`フィルタの`bind_address`オプションにアドレスを明示指定する際、
-           バックスラッシュエスケープ(`tcp\\://...\\:5555`)・シングルクォート
-           (`bind_address='tcp://...'`)のいずれの方法でも、FFmpegの
-           フィルタグラフ構文解析が`:`をオプション区切りとして扱ってしまい
-           `[AVFilterGraph] No option name near '//...'`で失敗することを実機で
-           確認した(FFmpeg 7.0.3で検証。既知のエスケープの複雑さに起因する
-           もので、本プロジェクト固有のバグではない可能性が高い)。
-           `zmq`フィルタのコンパイル時デフォルト値が`tcp://*:5555`
-           (libavfilter/f_zmq.c参照)であり、ちょうど本システムが使いたい
-           5555番ポートと一致するため、`bind_address`オプションを一切指定せず
-           デフォルトのまま`zmq`フィルタを裸で追加する方式に変更し、
-           エスケープ問題そのものを回避した。`compositor/zmqctl.py`の
-           接続先(`tcp://127.0.0.1:5555`)は、`tcp://*:5555`でbindされた
-           ソケットへループバック経由で問題なく接続できる。
+        グラフ構成:
+          1. quadout: 4入力をscale+hstack+vstackで2x2合成 (常時静的、
+             enable切替は不要)。
+          2. singleout: 1920x1080の黒背景に対し、4入力を`overlay@single0..3`
+             で順にチェーンする。同時にenable=1になるのは選択中の1本のみ
+             (他は enable=0 でパススルー) なので、結果的に選択中の1本だけが
+             全画面表示される。
+          3. merged: `overlay@mode` でquadoutを土台にsingleoutを重ね、
+             enableでモードを切り替える (SINGLE時のみsingleoutが可視化される)。
+          4. drawtext@alarm: フォーマット不統一アラームのOSD焼き込み。
+          5. zmq (enable_zmq時): ランタイムコマンド受信用フィルタ。
+             bind_addressはFFmpegのコンパイル時デフォルト(`tcp://*:5555`。
+             libavfilter/f_zmq.c参照)をそのまま使う。理由:
+             `bind_address`をfilter_complex内にインライン指定すると、
+             バックスラッシュエスケープ・シングルクォートのいずれの方法でも
+             FFmpegのフィルタグラフ構文解析と衝突して
+             `No option name near '//...'` になることを実機で確認したため。
         """
         parts = []
-        # 各入力を1920x1080相当のハーフサイズにスケールして2x2に並べる
+        # 1. quadout: 各入力を1920x1080相当のハーフサイズにスケールして2x2に並べる
         parts.append(
             "[0:v]scale=960:540[q0];[1:v]scale=960:540[q1];"
             "[2:v]scale=960:540[q2];[3:v]scale=960:540[q3];"
             "[q0][q1]hstack=inputs=2[qtop];[q2][q3]hstack=inputs=2[qbot];"
-            "[qtop][qbot]vstack=inputs=2[quadbase]"
+            "[qtop][qbot]vstack=inputs=2[quadout]"
         )
-        parts.append(
-            f"[quadbase]overlay@quad=x=0:y=0:enable=1[quadout]"
-        )
+
+        # 2. singleout: 黒背景に対し4入力をoverlayでチェーン(overlayは2入力のみ
+        #    受け付けるため、4入力を1つのoverlayにまとめることはできない)。
+        parts.append("color=c=black:s=1920x1080[sbase]")
+        prev = "sbase"
         for i in range(4):
-            parts.append(f"[{i}:v]crop@single{i}=1920:1080:0:0:enable=0[single{i}]")
-        # シングルモードでは選択中の入力のみ表示 (enableはランタイムでzmq切替)
+            out_label = "singleout" if i == 3 else f"sov{i}"
+            parts.append(f"[{prev}][{i}:v]overlay@single{i}=x=0:y=0:enable=0[{out_label}]")
+            prev = out_label
+
+        # 3. merged: quadoutを土台にsingleoutを重ね、モードに応じて表示を切替
+        parts.append("[quadout][singleout]overlay@mode=x=0:y=0:enable=0[merged]")
+
+        # 4. アラームOSD
+        alarm_out = "vout_pre" if enable_zmq else "vout"
         parts.append(
-            "[single0][single1][single2][single3]"
-            "overlay@quad2=x=0:y=0:enable=0[singleout]"
+            f"[merged]drawtext@alarm=text='{alarm_text}':"
+            f"fontcolor=red:fontsize=48:x=(w-text_w)/2:y=h-100:enable=0[{alarm_out}]"
         )
+
+        # 5. zmq (ランタイムコマンド受信)
         if enable_zmq:
-            parts.append(
-                f"[quadout]drawtext@alarm=text='{alarm_text}':"
-                "fontcolor=red:fontsize=48:x=(w-text_w)/2:y=h-100:enable=0[vout_pre]"
-            )
             parts.append("[vout_pre]zmq[vout]")
-        else:
-            parts.append(
-                f"[quadout]drawtext@alarm=text='{alarm_text}':"
-                "fontcolor=red:fontsize=48:x=(w-text_w)/2:y=h-100:enable=0[vout]"
-            )
+
         return ";".join(parts)

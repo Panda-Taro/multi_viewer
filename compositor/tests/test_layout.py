@@ -32,19 +32,28 @@ def test_set_mode_single_requires_valid_index():
 
 
 def test_set_mode_single_selects_correct_stream():
+    # 2026-09実機ビルドで判明: `crop`フィルタはenable(timeline)オプションに
+    # 対応していないため、overlayフィルタのみで表示切替する設計に変更した。
     c = DisplayModeController()
     c.set_mode(DisplayMode.SINGLE, selected_index=2)
     assert c.selected_index == 2
     cmds = c._build_zmq_commands()
-    assert "crop@single2 enable 1" in cmds
-    assert "crop@single0 enable 0" in cmds
+    assert "overlay@single2 enable 1" in cmds
+    assert "overlay@single0 enable 0" in cmds
 
 
-def test_quad_mode_enables_quad_overlay_disables_all_single_crops():
+def test_quad_mode_disables_mode_overlay_and_all_single_overlays():
     c = DisplayModeController()
     cmds = c._build_zmq_commands()
-    assert "overlay@quad enable 1" in cmds
-    assert all(f"crop@single{i} enable 0" in cmds for i in range(4))
+    assert "overlay@mode enable 0" in cmds
+    assert all(f"overlay@single{i} enable 0" in cmds for i in range(4))
+
+
+def test_single_mode_enables_mode_overlay():
+    c = DisplayModeController()
+    c.set_mode(DisplayMode.SINGLE, selected_index=0)
+    cmds = c._build_zmq_commands()
+    assert "overlay@mode enable 1" in cmds
 
 
 def test_format_alarm_toggle():
@@ -83,6 +92,30 @@ def test_build_filter_complex_without_zmq_still_valid():
     fc = c.build_filter_complex(enable_zmq=False)
     assert "zmq" not in fc
     assert fc.endswith("[vout]")
+
+
+def test_build_filter_complex_does_not_use_crop_enable():
+    # 2026-09実機ビルドで判明: cropフィルタはenable(timeline)オプション非対応
+    # (`Timeline ('enable' option) not supported with filter 'crop'`)。
+    c = DisplayModeController()
+    fc = c.build_filter_complex()
+    assert "crop" not in fc
+
+
+def test_build_filter_complex_overlay_filters_have_exactly_two_inputs():
+    # 2026-09実機ビルドで判明: overlayフィルタは入力を2つしか取れないため、
+    # `[a][b][c][d]overlay=...` のような4入力指定は構文エラーになる。
+    # 各overlayインスタンスの直前のパッドラベルが常にちょうど2個であることを
+    # 検証し、同種の回帰を防ぐ。
+    import re
+
+    c = DisplayModeController()
+    fc = c.build_filter_complex()
+    for chain in fc.split(";"):
+        m = re.match(r"((?:\[[^\]]+\])+)overlay@", chain)
+        if m:
+            labels = re.findall(r"\[[^\]]+\]", m.group(1))
+            assert len(labels) == 2, f"overlayへの入力が2つでない: {chain}"
 
 
 def test_history_tracks_mode_changes():

@@ -171,3 +171,21 @@ clone・grepして確認の上で修正):
   (+`--enable-libfontconfig` `--enable-libharfbuzz`、
   `libfreetype6-dev`/`libfontconfig1-dev`/`libharfbuzz-dev`)が必要なため
   build_ffmpeg.shに追加した。
+  **さらに4回目の実機検証で判明(フィルタグラフ設計自体の誤り)**:
+  zmq/drawtextの問題解消後、`Timeline ('enable' option) not supported
+  with filter 'crop'` で失敗した。`crop`フィルタはenable(timeline)
+  オプションに対応していない。さらにこの時点では未発覚だったが、
+  `[single0][single1][single2][single3]overlay@quad2=...`のように
+  overlayフィルタに4入力を渡す記述、および`[quadbase]overlay@quad=...`
+  のように1入力しか渡さない記述も、overlayが厳密に2入力(base+overlay)
+  しか受け付けないため構文として無効だった。`compositor/layout.py`の
+  フィルタグラフを、(1)quadoutはhstack/vstackの結果をそのまま使い
+  overlay不要、(2)singleoutは黒背景に対しoverlay@single0..3を順に
+  チェーン(選択中の1本だけenable=1)、(3)quadoutとsingleoutを
+  overlay@mode(2入力)で合成しモードを切り替える、という3段構成に
+  全面的に書き直した。「overlayフィルタの入力は常に2つ」という制約を
+  今後のフィルタグラフ変更でも守れるよう、回帰テスト
+  (`test_build_filter_complex_overlay_filters_have_exactly_two_inputs`)を
+  追加した。**教訓**: FFmpegのフィルタグラフはコンパイルエラーのような
+  静的検証が効かず、実際に`ffmpeg`を実行するまで構造的な誤り(入力数不一致、
+  非対応オプション)が発覚しないため、実機での動作確認が特に重要になる。
