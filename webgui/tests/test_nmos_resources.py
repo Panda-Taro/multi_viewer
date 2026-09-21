@@ -14,6 +14,42 @@ def test_build_node_has_required_fields(isolated_dirs):
     assert len(node["interfaces"]) == 2
 
 
+def test_node_interfaces_chassis_and_port_id_match_is04_mac_pattern(isolated_dirs):
+    """IS-04's node_interface schema requires colon-separated lowercase
+    hex (`^([0-9a-f]{2}:){5}[0-9a-f]{2}$`); a dash-separated value here
+    caused a real registry to reject registration with 400 Bad Request."""
+    import re
+
+    from app import config_store
+    from app.nmos import identity as identity_module
+    from app.nmos import resources
+
+    config = config_store.load_config()
+    identity = identity_module.ensure_identity(config)["identity"]
+
+    node = resources.build_node(config, identity)
+    pattern = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
+    for interface in node["interfaces"]:
+        assert pattern.match(interface["chassis_id"]), interface["chassis_id"]
+        assert pattern.match(interface["port_id"]), interface["port_id"]
+
+
+def test_node_clock_does_not_claim_unimplemented_ptp(isolated_dirs):
+    """ref_type "ptp" requires additional fields (traceable/version/gmid/
+    locked) that only a real PTP client (step 3) can supply; declaring it
+    without them is schema-invalid and was another cause of a real
+    registry's 400 Bad Request."""
+    from app import config_store
+    from app.nmos import identity as identity_module
+    from app.nmos import resources
+
+    config = config_store.load_config()
+    identity = identity_module.ensure_identity(config)["identity"]
+
+    node = resources.build_node(config, identity)
+    assert node["clocks"] == [{"name": "clk0", "ref_type": "internal"}]
+
+
 def test_build_device_references_node_and_all_receivers(isolated_dirs):
     from app import config_store
     from app.nmos import identity as identity_module

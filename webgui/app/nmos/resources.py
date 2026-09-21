@@ -61,8 +61,12 @@ def _media_interfaces(config: dict) -> list[dict[str, Any]]:
         result.append(
             {
                 "name": name,
-                "chassis_id": mac.replace(":", "-").lower(),
-                "port_id": mac.replace(":", "-").lower(),
+                # IS-04's node_interface schema requires colon-separated
+                # lowercase hex here (regex `^([0-9a-f]{2}:){5}[0-9a-f]{2}$`)
+                # -- an earlier revision used dashes and was rejected by a
+                # real registry with 400 Bad Request.
+                "chassis_id": mac.lower(),
+                "port_id": mac.lower(),
             }
         )
     return result
@@ -85,7 +89,12 @@ def build_node(config: dict, identity: dict) -> dict[str, Any]:
         },
         "caps": {},
         "services": [],
-        "clocks": [{"name": "clk0", "ref_type": "ptp"}],
+        # ref_type "ptp" requires additional fields (traceable/version/
+        # gmid/locked) that only a real PTP client can supply -- not
+        # implemented until step 3. Declaring "internal" here is accurate
+        # for now and avoids a schema validation failure (400) against a
+        # real registry; revisit once PTP status is available.
+        "clocks": [{"name": "clk0", "ref_type": "internal"}],
         "interfaces": _media_interfaces(config),
     }
 

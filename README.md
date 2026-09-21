@@ -187,7 +187,16 @@ NMOSコントローラとの相互接続は未検証。
   - 自作モックRDSに対する結合テスト（登録・Query API・404後の再登録）
   - WebGUIダッシュボードへのNMOS登録状態表示、メディア設定画面へのNMOSバッジ・ポーリング反映
 
+- **実機RDSでの検証で判明した不具合と修正（2026-09-21）**: ローカルサーバーから実際の
+  RDSへ登録したところ`400 Bad Request`が発生。原因はNode interfaceの`chassis_id`/
+  `port_id`のフォーマット誤り（ダッシュ区切り→IS-04が要求するコロン区切りに修正）と、
+  未実装のPTPを`ref_type: "ptp"`として誤って宣言していたこと（`"internal"`に修正）。
+  詳細はNOTES.md参照。**この修正後、実際のRDSへの再登録成功はまだ確認できていない**
+  （ローカル開発機から実機に到達できないため。次回のログ確認が必要）。
+
 - **未検証（実機・実NMOSコントローラでの検証が必要）**:
+  - 上記修正後、実際のRDS（172.17.201.192:3210等）への登録が成功し、Query APIで
+    5リソースが見えることの再確認
   - **実際のAMWA公式nmos-cpp Registry、または市販/OSSのNMOS Registry製品との相互接続**
   - **実際のNMOSコントローラ（Blackmagic Video Hub Automation、Riedel、Lawo等）からの
     IS-05 activate要求の受信・解釈**

@@ -33,6 +33,21 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _describe_exception(exc: Exception) -> str:
+    """`str(exc)` on an httpx.HTTPStatusError only gives the status code,
+    not the registry's JSON-schema validation error body -- which is
+    usually the only thing that actually explains a 400. Append it when
+    present so log entries are useful for diagnosing a real registry's
+    complaints without needing to reproduce the request by hand."""
+    response = getattr(exc, "response", None)
+    if response is None:
+        return str(exc)
+    body = response.text.strip()
+    if not body:
+        return str(exc)
+    return f"{exc} | response body: {body[:2000]}"
+
+
 def registration_base_url(rds_static: dict, api_version: str) -> str:
     return f"http://{rds_static['address']}:{rds_static['port']}/x-nmos/registration/{api_version}/"
 
@@ -100,8 +115,9 @@ async def run_forever(
             try:
                 await register_all(client, base_url, config, identity)
             except Exception as exc:  # noqa: BLE001 -- any failure here just means "retry later"
-                status_store.write_status(registration_status="error", last_error=str(exc))
-                log_store.log_event("nmos", "error", f"RDSへの登録に失敗しました ({base_url}): {exc}")
+                detail = _describe_exception(exc)
+                status_store.write_status(registration_status="error", last_error=detail)
+                log_store.log_event("nmos", "error", f"RDSへの登録に失敗しました ({base_url}): {detail}")
                 await sleep(RETRY_INTERVAL_SECONDS)
                 continue
 
@@ -132,8 +148,9 @@ async def _heartbeat_loop(
         try:
             accepted = await send_heartbeat(client, base_url, node_id)
         except Exception as exc:  # noqa: BLE001
-            status_store.write_status(registration_status="error", last_error=str(exc))
-            log_store.log_event("nmos", "warning", f"ハートビート送信に失敗しました: {exc}")
+            detail = _describe_exception(exc)
+            status_store.write_status(registration_status="error", last_error=detail)
+            log_store.log_event("nmos", "warning", f"ハートビート送信に失敗しました: {detail}")
             return
 
         if not accepted:
