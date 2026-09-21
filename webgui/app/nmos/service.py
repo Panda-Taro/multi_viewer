@@ -17,7 +17,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
-from . import connection_api, registration_client
+from . import channelmapping_api, connection_api, events_api, node_api, registration_client
 
 
 @contextlib.asynccontextmanager
@@ -33,7 +33,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="MultiViewer NMOS Service", lifespan=lifespan)
+
+    @app.get("/x-nmos/")
+    def root_index() -> list[str]:
+        # Advertise all four APIs requirement 4.8.4.3.2.2.1 groups under
+        # one common port, matching how other NMOS nodes self-describe.
+        # events/channelmapping are presence-only stubs (see their
+        # modules' docstrings); connection/node are real.
+        return ["channelmapping/", "connection/", "events/", "node/"]
+
     app.include_router(connection_api.router)
+    app.include_router(node_api.router)
+    app.include_router(events_api.router)
+    app.include_router(channelmapping_api.router)
     return app
 
 

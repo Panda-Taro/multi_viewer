@@ -31,7 +31,15 @@ Receiver×5（映像4＋音声1）を登録できること。**
   定義書からの逸脱」参照）
 - mDNS＆DNS-SD自動発見（`rds_discovery`="auto"）は未実装（ステップ2b）。その間は
   ダッシュボードに「無効」として表示される
-- Node API（P2Pモード）は今回のスコープ外
+- **IS-04 Node API（`/x-nmos/node/`）を追加実装**: 当初は「P2Pモードは今回のスコープ外」
+  としていたが、実機検証中に他のNMOS対応機器の`/x-nmos/`ルートと比較し、
+  channelmapping/connection/events/nodeの4つを揃えるよう要望があったため方針変更した。
+  Node API自体はRegistration用に既に組み立てているリソースJSONを読み取り専用で返すだけ
+  なので実装コストは小さく、副次的にP2Pモード（要件4.7.1.4）での発見にも対応する
+- `/x-nmos/events/`（IS-07）・`/x-nmos/channelmapping/`（IS-08）は**存在確認のみの
+  最小スタブ**（要件定義書にはどちらも登場しない、本システムのスコープ外の仕様）。
+  他機器と同じ4API構成に揃えるためだけに用意し、実体（イベントソース・チャンネル
+  マッピング）は空を返す。詳細は下記「NMOS実装」章参照
 
 やらないこと（後続ステップ）:
 
@@ -57,7 +65,10 @@ webgui/            FastAPI製WebGUI本体・NMOSサービス本体（同一Pytho
       resources.py         IS-04リソースJSON（Node/Device/Receiver）組み立て
       sdp.py                transport_file（SDP）の簡易パーサー
       registration_client.py  IS-04 Registration APIクライアント（静的登録・ハートビート）
+      node_api.py           IS-04 Node API（自己記述・読み取り専用、P2Pモード用）
       connection_api.py    IS-05 Connection API（Receiver専用）
+      events_api.py         IS-07 Events API（存在確認のみの最小スタブ）
+      channelmapping_api.py IS-08 Channel Mapping API（存在確認のみの最小スタブ）
       status_store.py      NMOS登録状態をWebGUIプロセスへ橋渡しする状態ファイル
       service.py            NMOSサービスのFastAPIアプリ（Connection API + 登録クライアント常駐）
   tests/               pytest（mock_rds.pyは結合テスト用の自作モックRDS）
@@ -161,6 +172,26 @@ config.jsonへ反映する（`enabled`＝`master_enable`、`amber`/`blue`＝`tra
 **スケジュール起動（`activate_scheduled_absolute`/`_relative`）は未対応（400エラー）**。
 `activate_immediate`のみサポートする。
 
+### `/x-nmos/`ルート: channelmapping/connection/events/node の4API構成
+
+要件4.8.4.3.2.2.1が`("channelmapping","connection","events","node")`を1つの共通ポートで
+扱うとしている点、および実機検証中に他のNMOS対応機器（放送機器Node）の`/x-nmos/`と
+見比べた結果を踏まえ、`GET /x-nmos/`が常にこの4つを返すようにした
+（`["channelmapping/", "connection/", "events/", "node/"]`）。ただし実装の中身は
+2種類に分かれる:
+
+- **`node/`（`nmos/node_api.py`）: 実体のある読み取り専用IS-04 Node API**。
+  Registration用に組み立てているのと同じNode/Device/Receiver×5のリソースJSONを
+  `self`/`devices`/`receivers`（および空の`senders`/`sources`/`flows`）として返す。
+  当初「P2Pモードは今回のスコープ外」としていたが、既存のリソース組み立てコードを
+  再利用するだけで実装コストが低く、副次的に要件4.7.1.4のP2Pモード発見にも対応できる
+  ため追加した（方針変更。NOTES.md参照）
+- **`events/`（IS-07）・`channelmapping/`（IS-08）: 存在確認のみの最小スタブ
+  （`nmos/events_api.py`, `nmos/channelmapping_api.py`）**。要件定義書はIS-07/IS-08に
+  一切言及しておらず、本システムのスコープには含まれない。バージョン一覧・空の
+  リソースコレクション（`sources`/`flows`/`io`/`map/activations`）を返すのみで、
+  実際のイベント配信やチャンネルルーティング機能は無い
+
 ### 結合テストについて
 
 `webgui/tests/mock_rds.py`に、Registration API（`POST resource`, `POST health/nodes/{id}`）と
@@ -186,6 +217,8 @@ NMOSコントローラとの相互接続は未検証。
     `activate_immediate`によるconfig.json反映、SDP直接指定とtransport_file(SDP)指定の両方
   - 自作モックRDSに対する結合テスト（登録・Query API・404後の再登録）
   - WebGUIダッシュボードへのNMOS登録状態表示、メディア設定画面へのNMOSバッジ・ポーリング反映
+  - IS-04 Node API（self/devices/receivers/空のsenders・sources・flows）
+  - IS-07/IS-08スタブの`/x-nmos/`ルート構成・各バージョン一覧・空コレクション応答
 
 - **実機RDS（nmos-cpp）での検証で判明した不具合と修正（2026-09-21〜22）**:
   実際のRDSへ登録したところ`400 Bad Request`が発生。修正は2回に分かれた:
@@ -200,6 +233,9 @@ NMOSコントローラとの相互接続は未検証。
 - **未検証（実機・実NMOSコントローラでの検証が必要）**:
   - 上記再修正後、実際のRDS（172.17.201.192:3210、nmos-cpp）への登録が成功し、
     Query APIで5リソースが見えることの再確認（最優先）
+  - 実機で`http://<制御NIC IP>:<common_port>/x-nmos/`にアクセスし、
+    channelmapping/connection/events/nodeの4つが表示されること、`node/v1.3/self`等が
+    正しく応答することの確認
   - **実際のAMWA公式nmos-cpp Registry、または市販/OSSのNMOS Registry製品との相互接続**
   - **実際のNMOSコントローラ（Blackmagic Video Hub Automation、Riedel、Lawo等）からの
     IS-05 activate要求の受信・解釈**
@@ -286,9 +322,9 @@ pip install -r requirements.txt pytest httpx pytest-asyncio
 pytest -q
 ```
 
-66件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
-WebGUIの各画面とAPI・NMOS（IS-04リソース生成/Registrationクライアント/IS-05
-Connection API/自作モックRDSとの結合テスト）を検証している。
+80件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
+WebGUIの各画面とAPI・NMOS（IS-04リソース生成/Registrationクライアント/Node API/
+IS-05 Connection API/IS-07・IS-08スタブ/自作モックRDSとの結合テスト）を検証している。
 UIのブラウザでの目視確認は `uvicorn app.main:app` をローカルで起動して行った
 （Windows開発機のため `ip`/`netplan`/`psutil` 等OS依存機能は自動的にNo-op/N-A表示に
 フォールバックする設計）。

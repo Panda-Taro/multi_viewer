@@ -103,11 +103,6 @@ def reset_staged_cache() -> None:
         _staged.clear()
 
 
-@router.get("/x-nmos/")
-def root_index() -> list[str]:
-    return ["connection/"]
-
-
 @router.get("/x-nmos/connection/")
 def connection_index() -> list[str]:
     return [f"{v}/" for v in SUPPORTED_VERSIONS]
