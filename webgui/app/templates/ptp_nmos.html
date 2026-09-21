@@ -1,42 +1,68 @@
 {% extends "base.html" %}
+{% block title %}PTP・NMOS設定 - MultiViewer{% endblock %}
 {% block content %}
 <h1>PTP・NMOS設定</h1>
-{% if error %}<div class="alert-error">保存に失敗しました: {{ error }} (前の設定を維持しています)</div>{% endif %}
+<p class="help-text">
+  ここでの設定は設定ストアに保存されるのみで、実際のPTPクライアント動作・NMOS登録は後続ステップで実装されます。
+</p>
 
-<h2>PTP設定</h2>
-<form class="settings-form" method="post" action="/mgmt/ptp-nmos/ptp">
-  <label>ドメイン番号 (0-127)</label>
-  <input type="number" name="domain" value="{{ ptp.domain }}">
-  <button type="submit">保存</button>
-</form>
+<div class="system-grid">
+  <div class="panel" id="ptp-panel">
+    <div class="panel-title">PTP設定</div>
+    <div class="form-row">
+      <label>ドメイン</label>
+      <input type="number" id="ptp-domain" min="0" max="127" value="{{ config.ptp.domain }}">
+    </div>
+    <button class="btn btn-small" id="ptp-save">保存</button>
+    <span class="save-status" id="ptp-status"></span>
+  </div>
 
-<h2>NMOS設定</h2>
-<form class="settings-form" method="post" action="/mgmt/ptp-nmos/nmos">
-  <label>RDS発見方式</label>
-  <select name="discovery_mode">
-    <option value="mdns" {{ 'selected' if nmos.discovery_mode == 'mdns' }}>mDNS/DNS-SD自動発見</option>
-    <option value="static" {{ 'selected' if nmos.discovery_mode == 'static' }}>静的IP/ポート指定</option>
-    <option value="p2p" {{ 'selected' if nmos.discovery_mode == 'p2p' }}>P2P (RDS無し)</option>
-  </select>
-  <label>Registration API アドレス (静的モード時)</label>
-  <input type="text" name="registration_address" value="{{ nmos.registration_address }}">
-  <label>Registration API ポート (静的モード時)</label>
-  <input type="number" name="registration_port" value="{{ nmos.registration_port }}">
-  <label>IS-04バージョン</label>
-  <select name="is04_version">
-    <option value="v1.1" {{ 'selected' if nmos.is04_version == 'v1.1' }}>v1.1</option>
-    <option value="v1.2" {{ 'selected' if nmos.is04_version == 'v1.2' }}>v1.2</option>
-    <option value="v1.3" {{ 'selected' if nmos.is04_version == 'v1.3' }}>v1.3</option>
-  </select>
-  <label>IS-05バージョン</label>
-  <select name="is05_version">
-    <option value="v1.0" {{ 'selected' if nmos.is05_version == 'v1.0' }}>v1.0</option>
-    <option value="v1.1" {{ 'selected' if nmos.is05_version == 'v1.1' }}>v1.1</option>
-  </select>
-  <label>Node API ソースポート ("auto"またはポート番号)</label>
-  <input type="text" name="node_api_port" value="{{ nmos.node_api_port }}">
-  <label>Registration API ソースポート ("auto"またはポート番号)</label>
-  <input type="text" name="registration_api_port" value="{{ nmos.registration_api_port }}">
-  <button type="submit">保存</button>
-</form>
+  <div class="panel" id="nmos-panel">
+    <div class="panel-title">NMOS設定</div>
+    <div class="form-row">
+      <label>RDS登録方式</label>
+      <select id="nmos-rds-discovery">
+        <option value="static" {% if config.nmos.rds_discovery == "static" %}selected{% endif %}>静的</option>
+        <option value="auto" {% if config.nmos.rds_discovery == "auto" %}selected{% endif %}>自動 (mDNS+DNS-SD)</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>RDS IPアドレス</label>
+      <input type="text" id="nmos-rds-address" value="{{ config.nmos.rds_static.address }}">
+    </div>
+    <div class="form-row">
+      <label>RDSポート番号</label>
+      <input type="number" id="nmos-rds-port" min="0" max="65535" value="{{ config.nmos.rds_static.port }}">
+    </div>
+    <div class="form-row">
+      <label>APIバージョン</label>
+      <select id="nmos-rds-version">
+        <option value="v1.1" {% if config.nmos.rds_static.api_version == "v1.1" %}selected{% endif %}>v1.1</option>
+        <option value="v1.2" {% if config.nmos.rds_static.api_version == "v1.2" %}selected{% endif %}>v1.2</option>
+        <option value="v1.3" {% if config.nmos.rds_static.api_version == "v1.3" %}selected{% endif %}>v1.3</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>共通待受ポート</label>
+      <input type="number" id="nmos-common-port" min="0" max="65535" value="{{ config.nmos.common_port }}">
+    </div>
+    <div class="help-text">channelmapping / connection / events / node の待ち受けポート番号</div>
+    <div class="form-row">
+      <label>送信元ポート</label>
+      <select id="nmos-source-port-mode">
+        <option value="auto" {% if config.nmos.source_port_mode == "auto" %}selected{% endif %}>自動（エフェメラル）</option>
+        <option value="manual" {% if config.nmos.source_port_mode == "manual" %}selected{% endif %}>手動</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>送信元ポート番号</label>
+      <input type="number" id="nmos-source-port" min="0" max="65535" value="{{ config.nmos.source_port or '' }}">
+    </div>
+    <button class="btn btn-small" id="nmos-save">保存</button>
+    <span class="save-status" id="nmos-status"></span>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/mgmt/static/js/ptp_nmos.js"></script>
 {% endblock %}

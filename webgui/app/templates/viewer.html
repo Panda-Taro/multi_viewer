@@ -3,29 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MultiViewer 視聴ページ</title>
-  <style>
-    body { margin: 0; background: #000; color: #ddd; font-family: sans-serif; }
-    #video-container { position: relative; width: 100vw; height: 100vh; }
-    video { width: 100%; height: 100%; object-fit: contain; background: #000; }
-    #mode-toggle {
-      position: absolute; bottom: 16px; right: 16px;
-      background: rgba(30,30,30,0.8); color: #fff; border: 1px solid #555;
-      padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 14px;
-    }
-    #alarm {
-      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
-      background: rgba(180,20,20,0.85); color: #fff; padding: 8px 16px; border-radius: 4px;
-      display: none; font-size: 16px;
-    }
-  </style>
+  <title>MultiViewer 視聴</title>
+  <link rel="stylesheet" href="/mgmt/static/css/style.css">
 </head>
 <body>
-  <div id="video-container">
-    <video id="whep-video" autoplay playsinline muted></video>
-    <button id="mode-toggle">表示モード切替 (4分割⇔シングル)</button>
-    <div id="alarm">映像フォーマットが4系統で非統一です</div>
-  </div>
-  <script src="/mgmt/static/js/viewer.js" data-viewer-path="{{ viewer_path }}"></script>
+  <main class="content" style="max-width: 900px; margin: 0 auto;">
+    <h1>MultiViewer 視聴画面</h1>
+    <div class="panel">
+      <p>
+        この画面は視聴用URL（{{ config.streaming.url_path }}）のプレースホルダーです。
+        WebRTC（WHEP）による実際の映像配信は後続ステップ（MediaMTX連携）で実装されます。
+      </p>
+      <div class="preview-box" style="max-width: 640px;">
+        <div class="preview-quad">
+          <div>CH1</div><div>CH2</div><div>CH3</div><div>CH4</div>
+        </div>
+      </div>
+      <p class="help-text">
+        表示モード切替はダッシュボードから操作できます（<a href="/mgmt/">/mgmt/</a>）。
+      </p>
+    </div>
+  </main>
 </body>
 </html>

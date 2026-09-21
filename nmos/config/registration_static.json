@@ -1,7 +1,0 @@
-{
-  "_comment": "discovery_backend=static時の設定例。外部RDS(Registration API)を静的IP/ポートで指定する場合に node_config.json とマージして使用する (④-7)。",
-  "discovery_backend": "static",
-  "registration_address": "192.168.10.50",
-  "registration_port": 8010,
-  "registration_version": "v1.3"
-}

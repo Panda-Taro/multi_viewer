@@ -1,40 +1,95 @@
-// webgui/app/static/js/dashboard.js
-// 対応要件: ④-4, ④-8-4-1-1-1-2 (映像プレビュー画面クリックで4分割⇔単一表示を
-// 切替、1秒以内反映。従来のボタンクリックと同じAPIを呼ぶ)
-document.addEventListener("DOMContentLoaded", () => {
-  const btn = document.getElementById("toggle-mode-btn");
-  const label = document.getElementById("mode-label");
-  const preview = document.getElementById("preview");
+function ledClass(receiver) {
+  return receiver.enabled ? "led on" : "led";
+}
 
-  const toggleMode = async () => {
-    const res = await fetch("/api/display-mode/toggle", { method: "POST" });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (label) label.textContent = data.mode === "quad" ? "4分割" : "シングル";
-    if (btn) btn.dataset.mode = data.mode;
-    if (preview) preview.dataset.mode = data.mode;
+async function refreshDashboard() {
+  const res = await fetch("/api/dashboard/status");
+  if (!res.ok) return;
+  const data = await res.json();
+
+  document.getElementById("cpu-percent").textContent =
+    data.cpu_percent === null ? "N/A" : data.cpu_percent.toFixed(1) + " %";
+  document.getElementById("mem-percent").textContent =
+    data.memory_percent === null ? "N/A" : data.memory_percent.toFixed(1) + " %";
+
+  const nicText = (nic) => {
+    const addr = nic.live_addresses.map((a) => `${a.address}/${a.prefix}`).join(", ") || "未設定";
+    return `${nic.interface || "(未設定)"} - ${nic.link_state} - ${addr}`;
   };
+  document.getElementById("nic-control").textContent = nicText(data.nics.control);
+  document.getElementById("nic-amber").textContent = nicText(data.nics.media_amber);
+  document.getElementById("nic-blue").textContent = nicText(data.nics.media_blue);
 
-  if (btn) btn.addEventListener("click", toggleMode);
+  const videoRows = document.getElementById("video-led-rows");
+  videoRows.innerHTML = "";
+  data.video_receivers.forEach((r) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>映像 CH${r.id}</td><td><span class="${ledClass(r)}"></span>${r.enabled ? "有効" : "無効"}</td>`;
+    videoRows.appendChild(tr);
+  });
 
-  if (preview) {
-    preview.addEventListener("click", toggleMode);
-    preview.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        toggleMode();
-      }
+  const audioRows = document.getElementById("audio-led-rows");
+  audioRows.innerHTML = "";
+  data.audio_receivers.forEach((r) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>音声 CH${r.id}</td><td><span class="${ledClass(r)}"></span>${r.enabled ? "有効" : "無効"}</td>`;
+    audioRows.appendChild(tr);
+  });
+
+  document.getElementById("viewer-url").textContent = data.viewer_url_path;
+  document.getElementById("display-mode-select").value = data.display_mode;
+  document.getElementById("single-source-select").value = data.single_source;
+}
+
+async function applyDisplayMode() {
+  const mode = document.getElementById("display-mode-select").value;
+  const singleSource = parseInt(document.getElementById("single-source-select").value, 10);
+  const status = document.getElementById("display-mode-status");
+  status.textContent = "";
+  status.className = "save-status";
+  try {
+    const res = await fetch("/api/display", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: mode, single_source: singleSource }),
     });
-  }
-
-  // 5秒ごとにシステム状態を更新 (帯域/CPU/Receiver LED)
-  setInterval(async () => {
-    try {
-      const res = await fetch("/api/status");
-      if (!res.ok) return;
-      // 簡易実装: フル再読み込みはせず今後の拡張余地として残す
-    } catch (e) {
-      /* ネットワーク一時断は無視 */
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      status.textContent = "保存失敗: " + (body.detail || res.status);
+      status.classList.add("err");
+      return;
     }
-  }, 5000);
+    status.textContent = "保存しました";
+    status.classList.add("ok");
+    updatePreview(mode, singleSource);
+  } catch (e) {
+    status.textContent = "保存失敗: " + e;
+    status.classList.add("err");
+  }
+}
+
+function updatePreview(mode, singleSource) {
+  const quad = document.getElementById("preview-quad");
+  if (mode === "single") {
+    quad.querySelectorAll("div").forEach((div, i) => {
+      div.style.display = i + 1 === singleSource ? "flex" : "none";
+    });
+    quad.style.gridTemplateColumns = "1fr";
+    quad.style.gridTemplateRows = "1fr";
+  } else {
+    quad.querySelectorAll("div").forEach((div) => (div.style.display = "flex"));
+    quad.style.gridTemplateColumns = "1fr 1fr";
+    quad.style.gridTemplateRows = "1fr 1fr";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("display-mode-apply").addEventListener("click", applyDisplayMode);
+  document.getElementById("preview-box").addEventListener("click", () => {
+    const select = document.getElementById("display-mode-select");
+    select.value = select.value === "quad" ? "single" : "quad";
+    applyDisplayMode();
+  });
+  refreshDashboard();
+  setInterval(refreshDashboard, 5000);
 });

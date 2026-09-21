@@ -1,83 +1,73 @@
-"""webgui/app/log_store.py
+"""Append-only event log used by the WebGUI and, in later steps, by the
+PTP/NMOS/receiver processes to record events such as PTP failover, NMOS
+connect/disconnect and receiver state changes (requirement 5.3.1).
 
-対応要件: ⑤ (PTP切替/NMOS接続断/Receiver状態変化のログ記録、WebGUIでの
-閲覧・エクスポート)
-
-ログフォーマット (判断メモ、NOTES.md参照):
-  "<ISO8601> [<コンポーネント>] [<レベル>] <メッセージ>" のプレーンテキスト1行。
-  実機では各コンポーネントのsystemdサービスがjournalおよび/またはこの形式で
-  `/var/log/multiviewer/*.log` に書き込む。WebGUIは複数ログファイルを
-  マージして時系列表示し、そのままダウンロード可能にする。
+Stored as JSON Lines so it can be tailed/exported trivially and appended to
+concurrently by multiple processes without corrupting earlier entries.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any
+
+LOG_DIR = Path(os.environ.get("MULTIVIEWER_LOG_DIR", "/var/log/multiviewer"))
+LOG_PATH = LOG_DIR / "events.log"
+
+_lock = threading.Lock()
+
+# Keeping this bounded avoids the WebGUI log view/export growing unbounded
+# on a long-running server, since step 1 explicitly excludes a log
+# management backend (requirement 8.5.1).
+MAX_LINES_KEPT = 20000
 
 
-@dataclass
-class LogEntry:
-    timestamp: str
-    component: str
-    level: str
-    message: str
+def log_event(source: str, level: str, message: str, **extra: Any) -> None:
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": source,
+        "level": level,
+        "message": message,
+    }
+    if extra:
+        entry["extra"] = extra
+    with _lock:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        _trim_if_needed()
 
-    def format_line(self) -> str:
-        return f"{self.timestamp} [{self.component}] [{self.level}] {self.message}"
 
-    @staticmethod
-    def parse_line(line: str) -> "LogEntry | None":
-        # "<ts> [<component>] [<level>] <message>"
+def _trim_if_needed() -> None:
+    if not LOG_PATH.exists():
+        return
+    with open(LOG_PATH, encoding="utf-8") as f:
+        lines = f.readlines()
+    if len(lines) > MAX_LINES_KEPT:
+        with open(LOG_PATH, "w", encoding="utf-8") as f:
+            f.writelines(lines[-MAX_LINES_KEPT:])
+
+
+def read_events(limit: int = 500) -> list[dict[str, Any]]:
+    if not LOG_PATH.exists():
+        return []
+    with _lock, open(LOG_PATH, encoding="utf-8") as f:
+        lines = f.readlines()
+    events = []
+    for line in lines[-limit:]:
+        line = line.strip()
+        if not line:
+            continue
         try:
-            ts, rest = line.split(" [", 1)
-            component, rest = rest.split("] [", 1)
-            level, message = rest.split("] ", 1)
-            return LogEntry(timestamp=ts, component=component, level=level.strip("]"), message=message.rstrip("\n"))
-        except ValueError:
-            return None
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    events.reverse()  # newest first
+    return events
 
 
-@dataclass
-class LogStore:
-    """インメモリのログバッファ(実機では複数ログファイルの集約に置き換え)。"""
-
-    entries: list[LogEntry] = field(default_factory=list)
-    clock: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
-    max_entries: int = 10000
-
-    def add(self, component: str, level: str, message: str) -> LogEntry:
-        entry = LogEntry(
-            timestamp=self.clock().isoformat(), component=component, level=level, message=message
-        )
-        self.entries.append(entry)
-        if len(self.entries) > self.max_entries:
-            self.entries = self.entries[-self.max_entries :]
-        return entry
-
-    def filter(self, component: str | None = None, level: str | None = None) -> list[LogEntry]:
-        result = self.entries
-        if component:
-            result = [e for e in result if e.component == component]
-        if level:
-            result = [e for e in result if e.level == level]
-        return result
-
-    def export_text(self) -> str:
-        return "\n".join(e.format_line() for e in self.entries) + ("\n" if self.entries else "")
-
-    def load_from_file(self, path: Path) -> int:
-        if not path.exists():
-            return 0
-        count = 0
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            entry = LogEntry.parse_line(line)
-            if entry:
-                self.entries.append(entry)
-                count += 1
-        return count
-
-
-# アプリ全体で共有するログストア
-log_store = LogStore()
+def export_path() -> Path:
+    return LOG_PATH

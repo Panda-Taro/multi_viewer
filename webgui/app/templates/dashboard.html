@@ -1,45 +1,66 @@
 {% extends "base.html" %}
+{% block title %}ダッシュボード - MultiViewer{% endblock %}
 {% block content %}
 <h1>ダッシュボード</h1>
-<div class="grid-2">
-  <section class="pane">
-    <h2>映像プレビュー &amp; 表示モード</h2>
-    <div class="video-preview" id="preview" data-mode="{{ display_mode }}" role="button" tabindex="0" title="クリックで4分割⇔単一表示を切替">
-      <span>WebRTC (WHEP) プレビュー — 実機起動時に /monitor01/ の映像を縮小表示 (クリックで表示モード切替)</span>
+<div class="dashboard-grid">
+  <div class="panel">
+    <div class="panel-title">プレビュー</div>
+    <div class="preview-box" id="preview-box" title="クリックで表示モードを切り替え">
+      <div class="preview-quad" id="preview-quad">
+        <div>CH1</div><div>CH2</div><div>CH3</div><div>CH4</div>
+      </div>
     </div>
-    <button class="mode-toggle-btn" id="toggle-mode-btn" data-mode="{{ display_mode }}">
-      表示モード: <span id="mode-label">{{ '4分割' if display_mode == 'quad' else 'シングル' }}</span> (クリックで切替)
-    </button>
-    {% if format_alarm %}
-    <p class="alert-error">映像フォーマットが4系統で非統一です</p>
-    {% endif %}
-    <p><a href="{{ status.viewer_url }}" target="_blank">視聴用URL: {{ status.viewer_url }}</a></p>
-  </section>
+    <p class="help-text">
+      実際の映像合成・配信は後続ステップで実装されます。ここでは表示モード切替のUIのみ動作します。
+    </p>
+    <div class="checkbox-row">
+      <label>表示モード:</label>
+      <select id="display-mode-select">
+        <option value="quad">4分割</option>
+        <option value="single">単一表示</option>
+      </select>
+      <select id="single-source-select">
+        <option value="1">CH1</option>
+        <option value="2">CH2</option>
+        <option value="3">CH3</option>
+        <option value="4">CH4</option>
+      </select>
+      <button class="btn btn-small" id="display-mode-apply">適用</button>
+      <span class="save-status" id="display-mode-status"></span>
+    </div>
+    <p>
+      視聴用URL: <code id="viewer-url">-</code>
+      <a href="/monitor01/" target="_blank" rel="noopener">開く &#8599;</a>
+    </p>
+  </div>
 
-  <section class="pane">
-    <h2>システム状態</h2>
-    <table>
-      <tr><th>CPU使用率</th><td>{{ "%.1f"|format(status.cpu_percent) }} %</td></tr>
-      <tr><th>PTPロック</th><td>{{ "ロック中 (" + status.ptp_source + ")" if status.ptp_locked else "未ロック" }}</td></tr>
+  <div class="panel">
+    <div class="panel-title">システム状態</div>
+    <table class="status-table">
+      <tr><th>項目</th><th>値</th></tr>
+      <tr><td>CPU使用率</td><td id="cpu-percent">-</td></tr>
+      <tr><td>メモリ使用率</td><td id="mem-percent">-</td></tr>
+      <tr><td>PTPロック状態</td><td id="ptp-lock">未実装（後続ステップ）</td></tr>
+      <tr><td>制御NIC (1G)</td><td id="nic-control">-</td></tr>
+      <tr><td>メディアNIC Amber (10G)</td><td id="nic-amber">-</td></tr>
+      <tr><td>メディアNIC Blue (10G)</td><td id="nic-blue">-</td></tr>
     </table>
-    <h2>NIC帯域</h2>
-    <table>
-      {% for name, mbps in status.nic_bandwidth_mbps.items() %}
-      <tr><th>{{ name }}</th><td>{{ "%.2f"|format(mbps) }} Mbps</td></tr>
-      {% else %}
-      <tr><td colspan="2">NIC情報を取得できませんでした (非Linux環境またはip未インストール)</td></tr>
-      {% endfor %}
+
+    <div class="panel-title" style="margin-top:1rem">Receiver受信状態</div>
+    <table class="status-table">
+      <tr><th>映像Receiver</th><th>状態</th></tr>
+      <tbody id="video-led-rows"></tbody>
     </table>
-    <h2>Receiver状態</h2>
-    <table>
-      {% for r in status.receivers %}
-      <tr><td><span class="led led-{{ r.led.value }}"></span>{{ r.label }}
-        ({{ '有効・受信中' if r.led.value == 'ok' else ('無効' if r.led.value == 'disabled' else '有効・信号なし') }})
-      </td></tr>
-      {% endfor %}
+    <table class="status-table">
+      <tr><th>音声Receiver</th><th>状態</th></tr>
+      <tbody id="audio-led-rows"></tbody>
     </table>
-  </section>
+    <p class="help-text">
+      LEDは設定の有効/無効を反映した表示です。実際の受信有無に基づく点灯は映像受信実装（後続ステップ）後に反映されます。
+    </p>
+  </div>
 </div>
-
+{% endblock %}
+{% block scripts %}
 <script src="/mgmt/static/js/dashboard.js"></script>
 {% endblock %}

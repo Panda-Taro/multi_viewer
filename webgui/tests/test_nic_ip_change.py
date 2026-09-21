@@ -1,78 +1,164 @@
-import sys
-import os
+import subprocess
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-
-from datetime import datetime, timedelta, timezone
 import pytest
-from app.nic_ip_change import NicIpChangeManager, NicIpChangeError
 
 
-class FakeClock:
-    def __init__(self, start):
-        self.now = start
+def _noop_reboot():
+    pass
+
+
+class FakeReboot:
+    def __init__(self):
+        self.calls = 0
 
     def __call__(self):
-        return self.now
-
-    def advance(self, delta):
-        self.now += delta
+        self.calls += 1
 
 
-def test_request_change_creates_pending():
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=timezone.utc))
-    mgr = NicIpChangeManager(clock=clock)
-    change = mgr.request_change("amber0", "192.168.100.1/24", "192.168.200.1/24")
-    assert change.nic_name == "amber0"
-    assert not change.confirmed
-    assert len(mgr.active_pending()) == 1
+def test_render_netplan_yaml_static(isolated_dirs):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    yaml_text = nic_ip_change.render_netplan_yaml("eth0", "static", "192.168.10.10", 24, "192.168.10.1")
+    assert "eth0" in yaml_text
+    assert "192.168.10.10/24" in yaml_text
+    assert "via: 192.168.10.1" in yaml_text
+    assert "dhcp4: false" in yaml_text
 
 
-def test_request_change_rejects_bad_cidr():
-    mgr = NicIpChangeManager()
-    with pytest.raises(NicIpChangeError):
-        mgr.request_change("amber0", "192.168.100.1/24", "not-an-ip")
+def test_render_netplan_yaml_dhcp(isolated_dirs):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    yaml_text = nic_ip_change.render_netplan_yaml("eth0", "dhcp", "", 24, "")
+    assert "dhcp4: true" in yaml_text
 
 
-def test_confirm_after_reboot_clears_pending():
-    mgr = NicIpChangeManager()
-    mgr.request_change("amber0", "192.168.100.1/24", "192.168.200.1/24")
-    mgr.confirm_after_reboot("amber0")
-    assert mgr.active_pending() == []
+def test_render_netplan_yaml_static_requires_address(isolated_dirs):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    with pytest.raises(nic_ip_change.NicChangeError):
+        nic_ip_change.render_netplan_yaml("eth0", "static", "", 24, "")
 
 
-def test_rollback_due_after_timeout():
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=timezone.utc))
-    mgr = NicIpChangeManager(clock=clock, confirm_timeout=timedelta(minutes=5))
-    mgr.request_change("amber0", "192.168.100.1/24", "192.168.200.1/24")
-    assert mgr.is_rollback_due("amber0") is False
-    clock.advance(timedelta(minutes=6))
-    assert mgr.is_rollback_due("amber0") is True
+def test_control_target_requires_confirmed_risk(isolated_dirs):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    request = nic_ip_change.NicChangeRequest(
+        target="control", interface="eth0", mode="static", address="192.168.1.5", prefix=24
+    )
+    with pytest.raises(nic_ip_change.NicChangeError):
+        nic_ip_change.apply_change(request, reboot_fn=_noop_reboot)
 
 
-def test_rollback_returns_previous_ip_and_prevents_double_rollback():
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=timezone.utc))
-    mgr = NicIpChangeManager(clock=clock, confirm_timeout=timedelta(minutes=5))
-    mgr.request_change("amber0", "192.168.100.1/24", "192.168.200.1/24")
-    clock.advance(timedelta(minutes=6))
-    prev = mgr.rollback("amber0")
-    assert prev == "192.168.100.1/24"
-    assert mgr.active_pending() == []
-    with pytest.raises(NicIpChangeError):
-        mgr.rollback("amber0")  # already rolled back / not due again
+def test_apply_change_backs_up_absent_file_and_sets_pending(isolated_dirs):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    network_state = isolated_dirs["network_state"]
+    reboot = FakeReboot()
+
+    request = nic_ip_change.NicChangeRequest(
+        target="media_amber", interface="eth1", mode="static", address="192.168.20.10", prefix=24
+    )
+    state = nic_ip_change.apply_change(request, reboot_fn=reboot)
+
+    assert state["status"] == "pending_confirm"
+    assert reboot.calls == 1
+    assert nic_ip_change.netplan_file_for("media_amber").exists()
+
+    backup_dir = list(nic_ip_change.BACKUP_ROOT.iterdir())[0]
+    assert (backup_dir / "media_amber.absent").exists()
+    assert network_state.load_state()["status"] == "pending_confirm"
 
 
-def test_rollback_before_deadline_raises():
-    mgr = NicIpChangeManager(confirm_timeout=timedelta(minutes=5))
-    mgr.request_change("amber0", "192.168.100.1/24", "192.168.200.1/24")
-    with pytest.raises(NicIpChangeError):
-        mgr.rollback("amber0")
+def test_apply_change_backs_up_existing_file_content(isolated_dirs):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    target_path = nic_ip_change.netplan_file_for("media_blue")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("network:\n  version: 2\n  ethernets:\n    eth2:\n      dhcp4: true\n", encoding="utf-8")
+
+    request = nic_ip_change.NicChangeRequest(
+        target="media_blue", interface="eth2", mode="static", address="192.168.30.10", prefix=24
+    )
+    nic_ip_change.apply_change(request, reboot_fn=FakeReboot())
+
+    backup_dir = list(nic_ip_change.BACKUP_ROOT.iterdir())[0]
+    backed_up = (backup_dir / "media_blue.yaml").read_text(encoding="utf-8")
+    assert "dhcp4: true" in backed_up
+    assert "192.168.30.10" in target_path.read_text(encoding="utf-8")
 
 
-def test_confirmed_change_never_rolls_back_even_after_deadline():
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=timezone.utc))
-    mgr = NicIpChangeManager(clock=clock, confirm_timeout=timedelta(minutes=5))
-    mgr.request_change("amber0", "192.168.100.1/24", "192.168.200.1/24")
-    mgr.confirm_after_reboot("amber0")
-    clock.advance(timedelta(minutes=10))
-    assert mgr.is_rollback_due("amber0") is False
+def test_apply_change_restores_original_on_validation_failure(isolated_dirs, monkeypatch):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    target_path = nic_ip_change.netplan_file_for("media_amber")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    original = "network:\n  version: 2\n  ethernets:\n    eth1:\n      dhcp4: true\n"
+    target_path.write_text(original, encoding="utf-8")
+
+    monkeypatch.setattr(nic_ip_change.shutil, "which", lambda name: "/usr/sbin/netplan")
+
+    def failing_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr="bad yaml")
+
+    request = nic_ip_change.NicChangeRequest(
+        target="media_amber", interface="eth1", mode="static", address="10.0.0.5", prefix=24
+    )
+    with pytest.raises(nic_ip_change.NicChangeError):
+        nic_ip_change.apply_change(request, run=failing_run, reboot_fn=FakeReboot())
+
+    assert target_path.read_text(encoding="utf-8") == original
+
+
+def test_confirm_change_clears_pending_state(isolated_dirs):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    request = nic_ip_change.NicChangeRequest(
+        target="media_amber", interface="eth1", mode="static", address="10.0.0.5", prefix=24
+    )
+    nic_ip_change.apply_change(request, reboot_fn=FakeReboot())
+    state = nic_ip_change.confirm_change()
+    assert state["status"] == "stable"
+
+
+def test_rollback_is_noop_when_stable(isolated_dirs):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    reboot = FakeReboot()
+    result = nic_ip_change.perform_rollback_if_expired(reboot_fn=reboot)
+    assert result is None
+    assert reboot.calls == 0
+
+
+def test_rollback_is_noop_when_pending_but_not_expired(isolated_dirs):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    reboot = FakeReboot()
+    request = nic_ip_change.NicChangeRequest(
+        target="media_amber", interface="eth1", mode="static", address="10.0.0.5", prefix=24,
+        timeout_seconds=300,
+    )
+    nic_ip_change.apply_change(request, reboot_fn=FakeReboot())
+
+    result = nic_ip_change.perform_rollback_if_expired(reboot_fn=reboot)
+    assert result is None
+    assert reboot.calls == 0
+
+
+def test_rollback_restores_backup_and_reboots_when_expired(isolated_dirs):
+    nic_ip_change = isolated_dirs["nic_ip_change"]
+    network_state = isolated_dirs["network_state"]
+    target_path = nic_ip_change.netplan_file_for("media_amber")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    original = "network:\n  version: 2\n  ethernets:\n    eth1:\n      dhcp4: true\n"
+    target_path.write_text(original, encoding="utf-8")
+
+    request = nic_ip_change.NicChangeRequest(
+        target="media_amber", interface="eth1", mode="static", address="10.0.0.5", prefix=24,
+        timeout_seconds=1,
+    )
+    nic_ip_change.apply_change(request, reboot_fn=FakeReboot())
+
+    # Force expiry the same way test_network_state does.
+    from datetime import datetime, timedelta, timezone
+
+    state = network_state.load_state()
+    state["pending_since"] = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+    network_state._save_state_locked(state)
+
+    reboot = FakeReboot()
+    result = nic_ip_change.perform_rollback_if_expired(reboot_fn=reboot)
+
+    assert result is not None
+    assert result["status"] == "rolled_back"
+    assert reboot.calls == 1
+    assert target_path.read_text(encoding="utf-8") == original

@@ -1,62 +1,115 @@
 {% extends "base.html" %}
+{% block title %}メディアストリーム設定 - MultiViewer{% endblock %}
 {% block content %}
 <h1>メディアストリーム設定</h1>
-{% if error %}<div class="alert-error">保存に失敗しました: {{ error }} (前の設定を維持しています)</div>{% endif %}
+<p class="help-text">
+  ここでの設定は設定ストアに保存されるのみで、実際のIGMP Join・SDP取得等のプロトコル動作は後続ステップで実装されます。
+  NMOSから設定された場合は、この画面の値が自動的に（読み取り専用として）反映される予定です（後続ステップ）。
+</p>
 
-{% macro leg_fields(prefix, source_ip, multicast_group, port) %}
-  <div class="field-row"><label>Source IP ({{ prefix }})</label><input type="text" name="source_ip_{{ prefix|lower }}" value="{{ source_ip }}"></div>
-  <div class="field-row"><label>マルチキャストGrp ({{ prefix }})</label><input type="text" name="multicast_group_{{ prefix|lower }}" value="{{ multicast_group }}"></div>
-  <div class="field-row"><label>ポート ({{ prefix }})</label><input type="number" name="port_{{ prefix|lower }}" value="{{ port }}"></div>
-{% endmacro %}
-
-<div class="media-grid">
-  {% for v in videos %}
-  <form class="receiver-pane" method="post" action="/mgmt/media/video/{{ loop.index0 }}">
-    <h3>Video Receiver {{ loop.index }}</h3>
-    <div class="field-row"><label>有効</label><input type="checkbox" name="enabled" value="true" {{ 'checked' if v.enabled }}></div>
-    <div class="field-row"><label>ペイロードID</label><input type="number" name="payload_type" value="{{ v.payload_type }}"></div>
-    <div class="field-row">
+<h2>映像Receiver（4系統）</h2>
+<div class="receiver-grid" id="video-receiver-grid">
+  {% for r in config.receivers.video %}
+  <div class="receiver-card" data-kind="video" data-index="{{ loop.index }}">
+    <div class="receiver-card-title">
+      <span>映像 CH{{ loop.index }}</span>
+      <span class="save-status" data-role="status"></span>
+    </div>
+    <div class="form-row">
+      <label>有効/無効</label>
+      <input type="checkbox" data-field="enabled" {% if r.enabled %}checked{% endif %}>
+    </div>
+    <div class="form-row">
+      <label>ペイロードID</label>
+      <input type="number" data-field="payload_id" min="0" max="127" value="{{ r.payload_id }}">
+    </div>
+    <div class="form-row">
       <label>映像フォーマット</label>
-      <select name="video_format_mode">
-        <option value="sdp" {{ 'selected' if v.video_format_mode == 'sdp' }}>SDP自動</option>
-        <option value="59i" {{ 'selected' if v.video_format_mode == '59i' }}>59i固定</option>
-        <option value="59p" {{ 'selected' if v.video_format_mode == '59p' }}>59p固定</option>
+      <select data-field="video_format">
+        <option value="sdp" {% if r.video_format == "sdp" %}selected{% endif %}>SDP</option>
+        <option value="59.94i" {% if r.video_format == "59.94i" %}selected{% endif %}>59.94i (デフォルト)</option>
+        <option value="59.94p" {% if r.video_format == "59.94p" %}selected{% endif %}>59.94p</option>
       </select>
     </div>
-    <p class="hint">適用値: {{ v.video_format }} / {{ v.pg_format }}</p>
-    <div class="leg-divider">Amber</div>
-    {{ leg_fields("Amber", v.source_ip_amber, v.multicast_group_amber, v.port_amber) }}
-    <div class="leg-divider">Blue</div>
-    {{ leg_fields("Blue", v.source_ip_blue, v.multicast_group_blue, v.port_blue) }}
-    <button type="submit">保存</button>
-  </form>
+    <div class="form-row">
+      <label>カラーフォーマット</label>
+      <select data-field="color_format">
+        <option value="YCbCr4:2:2_10bit_SDR" selected>YCbCr 4:2:2 10bit SDR</option>
+      </select>
+    </div>
+    <div class="endpoint-group">
+      <div class="endpoint-group-title">Amber (source IP / group IP / port)</div>
+      <div class="endpoint-fields">
+        <input type="text" data-field="amber.source_ip" placeholder="source IP" value="{{ r.amber.source_ip }}">
+        <input type="text" data-field="amber.group_ip" placeholder="group IP" value="{{ r.amber.group_ip }}">
+        <input type="number" data-field="amber.port" placeholder="port" min="0" max="65535" value="{{ r.amber.port }}">
+      </div>
+    </div>
+    <div class="endpoint-group">
+      <div class="endpoint-group-title">Blue (source IP / group IP / port)</div>
+      <div class="endpoint-fields">
+        <input type="text" data-field="blue.source_ip" placeholder="source IP" value="{{ r.blue.source_ip }}">
+        <input type="text" data-field="blue.group_ip" placeholder="group IP" value="{{ r.blue.group_ip }}">
+        <input type="number" data-field="blue.port" placeholder="port" min="0" max="65535" value="{{ r.blue.port }}">
+      </div>
+    </div>
+    <button class="btn btn-small" data-role="save">保存</button>
+  </div>
   {% endfor %}
-
-  <form class="receiver-pane" method="post" action="/mgmt/media/audio">
-    <h3>Audio Receiver 1 (ch1/2)</h3>
-    <div class="field-row"><label>有効</label><input type="checkbox" name="enabled" value="true" {{ 'checked' if audio.enabled }}></div>
-    <div class="field-row"><label>ペイロードID</label><input type="number" name="payload_type" value="{{ audio.payload_type }}"></div>
-    <div class="field-row">
-      <label>サンプリング周波数</label>
-      <select name="sampling_mode">
-        <option value="sdp" {{ 'selected' if audio.sampling_mode == 'sdp' }}>SDP自動</option>
-        <option value="48khz" {{ 'selected' if audio.sampling_mode == '48khz' }}>48kHz固定</option>
-      </select>
-    </div>
-    <div class="field-row">
-      <label>パケットインターバル</label>
-      <select name="ptime_mode">
-        <option value="sdp" {{ 'selected' if audio.ptime_mode == 'sdp' }}>SDP自動</option>
-        <option value="1ms" {{ 'selected' if audio.ptime_mode == '1ms' }}>1ms固定</option>
-        <option value="0.125ms" {{ 'selected' if audio.ptime_mode == '0.125ms' }}>0.125ms固定</option>
-      </select>
-    </div>
-    <p class="hint">適用値: {{ audio.sample_rate }} Hz / {{ audio.packet_time_ms }} ms</p>
-    <div class="leg-divider">Amber</div>
-    {{ leg_fields("Amber", audio.source_ip_amber, audio.multicast_group_amber, audio.port_amber) }}
-    <div class="leg-divider">Blue</div>
-    {{ leg_fields("Blue", audio.source_ip_blue, audio.multicast_group_blue, audio.port_blue) }}
-    <button type="submit">保存</button>
-  </form>
 </div>
+
+<h2 style="margin-top:1.2rem">音声Receiver（1系統）</h2>
+<div class="receiver-grid" id="audio-receiver-grid">
+  {% for r in config.receivers.audio %}
+  <div class="receiver-card" data-kind="audio" data-index="{{ loop.index }}">
+    <div class="receiver-card-title">
+      <span>音声 CH{{ loop.index }}</span>
+      <span class="save-status" data-role="status"></span>
+    </div>
+    <div class="form-row">
+      <label>有効/無効</label>
+      <input type="checkbox" data-field="enabled" {% if r.enabled %}checked{% endif %}>
+    </div>
+    <div class="form-row">
+      <label>ペイロードID</label>
+      <input type="number" data-field="payload_id" min="0" max="127" value="{{ r.payload_id }}">
+    </div>
+    <div class="form-row">
+      <label>サンプリング</label>
+      <select data-field="sampling">
+        <option value="sdp" {% if r.sampling == "sdp" %}selected{% endif %}>SDP</option>
+        <option value="48kHz" {% if r.sampling == "48kHz" %}selected{% endif %}>48kHz</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>パケット間隔</label>
+      <select data-field="packet_time">
+        <option value="sdp" {% if r.packet_time == "sdp" %}selected{% endif %}>SDP</option>
+        <option value="1ms" {% if r.packet_time == "1ms" %}selected{% endif %}>1ms</option>
+        <option value="0.125ms" {% if r.packet_time == "0.125ms" %}selected{% endif %}>0.125ms</option>
+      </select>
+    </div>
+    <div class="endpoint-group">
+      <div class="endpoint-group-title">Amber (source IP / group IP / port)</div>
+      <div class="endpoint-fields">
+        <input type="text" data-field="amber.source_ip" placeholder="source IP" value="{{ r.amber.source_ip }}">
+        <input type="text" data-field="amber.group_ip" placeholder="group IP" value="{{ r.amber.group_ip }}">
+        <input type="number" data-field="amber.port" placeholder="port" min="0" max="65535" value="{{ r.amber.port }}">
+      </div>
+    </div>
+    <div class="endpoint-group">
+      <div class="endpoint-group-title">Blue (source IP / group IP / port)</div>
+      <div class="endpoint-fields">
+        <input type="text" data-field="blue.source_ip" placeholder="source IP" value="{{ r.blue.source_ip }}">
+        <input type="text" data-field="blue.group_ip" placeholder="group IP" value="{{ r.blue.group_ip }}">
+        <input type="number" data-field="blue.port" placeholder="port" min="0" max="65535" value="{{ r.blue.port }}">
+      </div>
+    </div>
+    <button class="btn btn-small" data-role="save">保存</button>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/mgmt/static/js/media.js"></script>
 {% endblock %}

@@ -1,103 +1,86 @@
-"""webgui/app/nic_state.py
+"""Read-only view of the current OS network state.
 
-対応要件: ④-8 (「10G/1GのNIC IPアドレス等を実際にOSから読み取りGUIに反映」)、
-⑦ (異なるハードウェアへ再展開してもコードは変えず、GUI設定のみで済む)
+Per requirement 4.8.4.4.1.1, the WebGUI must reflect whatever the OS
+actually reports rather than caching its own idea of NIC state -- that way
+the same build works unmodified on a different machine, driven purely by
+what the operator configures through the GUI.
 
-`ip -j addr show` (iproute2のJSON出力) をパースしてNIC一覧を得る。
-パース処理はサブプロセス実行と分離しており、実際の `ip` コマンド出力例を
-そのまま fixture として与えることで、非Linux環境でもロジックをテストできる。
+On a non-Linux dev machine (this project is edited on Windows, deployed on
+Ubuntu Server) the `ip` command is unavailable; every function here
+degrades to returning empty/zeroed data instead of raising, so the app and
+its tests run the same way on both platforms.
 """
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
-from dataclasses import dataclass, field
+from typing import Any
 
 
-class NicStateError(RuntimeError):
-    pass
-
-
-@dataclass
-class NicInfo:
-    name: str
-    mac: str
-    up: bool
-    ipv4_addresses: list[str] = field(default_factory=list)
-
-    @property
-    def primary_ipv4(self) -> str:
-        return self.ipv4_addresses[0] if self.ipv4_addresses else ""
-
-
-def parse_ip_addr_json(raw_json: str) -> list[NicInfo]:
-    """`ip -j addr show` の出力(JSON配列)をパースする。
-
-    各要素の例:
-    {
-      "ifname": "enp1s0f0",
-      "operstate": "UP",
-      "address": "aa:bb:cc:dd:ee:ff",
-      "addr_info": [ {"family": "inet", "local": "192.168.100.1", "prefixlen": 24} ]
-    }
-    """
+def _run_json(args: list[str]) -> Any:
+    if shutil.which(args[0]) is None:
+        return None
     try:
-        data = json.loads(raw_json)
-    except json.JSONDecodeError as e:
-        raise NicStateError(f"ip addr の出力をJSONとして解析できません: {e}") from e
+        result = subprocess.run(args, capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
 
-    result = []
-    for entry in data:
-        ifname = entry.get("ifname", "")
-        if ifname == "lo":
-            continue
-        addr_info = entry.get("addr_info", [])
-        ipv4s = [
-            f"{a['local']}/{a['prefixlen']}"
-            for a in addr_info
+
+def list_interfaces() -> list[dict[str, Any]]:
+    """Return [{name, state, mac, addresses: [{address, prefix, family}]}]."""
+    data = _run_json(["ip", "-j", "addr", "show"])
+    if data is None:
+        return []
+    interfaces = []
+    for link in data:
+        addresses = [
+            {
+                "address": a.get("local"),
+                "prefix": a.get("prefixlen"),
+                "family": a.get("family"),
+            }
+            for a in link.get("addr_info", [])
             if a.get("family") == "inet"
         ]
-        result.append(
-            NicInfo(
-                name=ifname,
-                mac=entry.get("address", ""),
-                up=entry.get("operstate", "").upper() == "UP",
-                ipv4_addresses=ipv4s,
-            )
+        interfaces.append(
+            {
+                "name": link.get("ifname"),
+                "state": link.get("operstate", "unknown"),
+                "mac": link.get("address", ""),
+                "addresses": addresses,
+            }
         )
-    return result
+    return interfaces
 
 
-def read_nic_state() -> list[NicInfo]:
-    """実機(Linux)で `ip -j addr show` を実行し結果をパースする。
+def interface_stats(name: str) -> dict[str, Any]:
+    """Cumulative rx/tx byte counters for one interface, read from sysfs.
 
-    非Linux/コマンド不在の場合は NicStateError を送出する
-    (呼び出し側 = webgui/app/routers/system.py がフォールバック表示を行う)。
+    Only a snapshot; the dashboard polls this periodically client-side and
+    derives a rough bandwidth figure from the delta itself, so no
+    background sampling daemon is needed for step 1.
     """
     try:
-        proc = subprocess.run(
-            ["ip", "-j", "addr", "show"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=True,
-        )
-    except (OSError, subprocess.SubprocessError) as e:
-        raise NicStateError(f"ip コマンドの実行に失敗しました: {e}") from e
-
-    return parse_ip_addr_json(proc.stdout)
+        rx = int(open(f"/sys/class/net/{name}/statistics/rx_bytes").read().strip())
+        tx = int(open(f"/sys/class/net/{name}/statistics/tx_bytes").read().strip())
+    except OSError:
+        return {"rx_bytes": None, "tx_bytes": None}
+    return {"rx_bytes": rx, "tx_bytes": tx}
 
 
-def classify_nics(
-    nics: list[NicInfo], amber_name: str, blue_name: str, control_name: str
-) -> dict:
-    """設定済みのAmber/Blue/制御NIC名に基づき役割ラベルを付与する (④-8表示用)。"""
-    by_name = {n.name: n for n in nics}
-    return {
-        "amber": by_name.get(amber_name),
-        "blue": by_name.get(blue_name),
-        "control": by_name.get(control_name),
-        "unclassified": [
-            n for n in nics if n.name not in (amber_name, blue_name, control_name)
-        ],
-    }
+def list_physical_interface_names() -> list[str]:
+    """Interface names excluding loopback/virtual, for populating the NIC
+    picker in the network settings form."""
+    names = []
+    for iface in list_interfaces():
+        name = iface["name"]
+        if name and name != "lo" and not name.startswith(("docker", "veth", "br-")):
+            names.append(name)
+    return names

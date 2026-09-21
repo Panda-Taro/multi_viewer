@@ -1,96 +1,137 @@
-"""webgui/app/routers/media.py
-
-対応要件: ④-8-4-2 メディアストリーム設定 (Receiverのみ。PTP・NMOS設定は
-④-8-4-3として別画面 webgui/app/routers/ptp_nmos.py に分離した)
-"""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
-from ..config_store import store, ConfigValidationError
-from ..nmos_sync import notify_receiver_toggle
+from .. import config_store, log_store
 
-router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
+router = APIRouter()
 
-@router.get("/mgmt/media", response_class=HTMLResponse)
-def media_page(request: Request, error: str | None = None):
+VIDEO_FORMAT_CHOICES = {"sdp", "59.94i", "59.94p"}
+COLOR_FORMAT_CHOICES = {"YCbCr4:2:2_10bit_SDR"}
+AUDIO_SAMPLING_CHOICES = {"sdp", "48kHz"}
+AUDIO_PACKET_TIME_CHOICES = {"sdp", "1ms", "0.125ms"}
+
+
+class Endpoint(BaseModel):
+    source_ip: str = ""
+    group_ip: str = ""
+    port: int = Field(default=0, ge=0, le=65535)
+
+
+class VideoReceiverUpdate(BaseModel):
+    enabled: bool
+    payload_id: int = Field(ge=0, le=127)
+    video_format: str
+    color_format: str
+    amber: Endpoint
+    blue: Endpoint
+
+    def validate_choices(self) -> Optional[str]:
+        if self.video_format not in VIDEO_FORMAT_CHOICES:
+            return f"video_format must be one of {sorted(VIDEO_FORMAT_CHOICES)}"
+        if self.color_format not in COLOR_FORMAT_CHOICES:
+            return f"color_format must be one of {sorted(COLOR_FORMAT_CHOICES)}"
+        return None
+
+
+class AudioReceiverUpdate(BaseModel):
+    enabled: bool
+    payload_id: int = Field(ge=0, le=127)
+    sampling: str
+    packet_time: str
+    amber: Endpoint
+    blue: Endpoint
+
+    def validate_choices(self) -> Optional[str]:
+        if self.sampling not in AUDIO_SAMPLING_CHOICES:
+            return f"sampling must be one of {sorted(AUDIO_SAMPLING_CHOICES)}"
+        if self.packet_time not in AUDIO_PACKET_TIME_CHOICES:
+            return f"packet_time must be one of {sorted(AUDIO_PACKET_TIME_CHOICES)}"
+        return None
+
+
+@router.get("/mgmt/media")
+def media_page(request: Request):
+    config = config_store.load_config()
     return templates.TemplateResponse(
-        request,
         "media.html",
-        {
-            "active_nav": "media",
-            "videos": store.media.videos,
-            "audio": store.media.audio,
-            "error": error,
-        },
+        {"request": request, "config": config, "active_page": "media"},
     )
 
 
-@router.post("/mgmt/media/video/{index}")
-def update_video(
-    index: int,
-    enabled: bool = Form(False),
-    payload_type: int = Form(112),
-    video_format_mode: str = Form("sdp"),
-    source_ip_amber: str = Form(""),
-    multicast_group_amber: str = Form(""),
-    port_amber: int = Form(0),
-    source_ip_blue: str = Form(""),
-    multicast_group_blue: str = Form(""),
-    port_blue: int = Form(0),
-):
-    try:
-        store.update_video_receiver(
-            index,
-            enabled=enabled,
-            payload_type=payload_type,
-            video_format_mode=video_format_mode,
-            source_ip_amber=source_ip_amber,
-            multicast_group_amber=multicast_group_amber,
-            port_amber=port_amber,
-            source_ip_blue=source_ip_blue,
-            multicast_group_blue=multicast_group_blue,
-            port_blue=port_blue,
-        )
-    except ConfigValidationError as e:
-        return RedirectResponse(url=f"/mgmt/media?error={e}", status_code=303)
-    notify_receiver_toggle("video", index, enabled)
-    return RedirectResponse(url="/mgmt/media", status_code=303)
+def _receiver_index(index: int, count: int) -> int:
+    """Convert the 1-based index used by the UI/API to a 0-based list index."""
+    if not 1 <= index <= count:
+        raise HTTPException(status_code=404, detail=f"receiver index must be between 1 and {count}")
+    return index - 1
 
 
-@router.post("/mgmt/media/audio")
-def update_audio(
-    enabled: bool = Form(False),
-    payload_type: int = Form(111),
-    sampling_mode: str = Form("sdp"),
-    ptime_mode: str = Form("sdp"),
-    source_ip_amber: str = Form(""),
-    multicast_group_amber: str = Form(""),
-    port_amber: int = Form(0),
-    source_ip_blue: str = Form(""),
-    multicast_group_blue: str = Form(""),
-    port_blue: int = Form(0),
-):
+@router.put("/api/media/video/{index}")
+def update_video_receiver(index: int, update: VideoReceiverUpdate):
+    error = update.validate_choices()
+    if error:
+        raise HTTPException(status_code=422, detail=error)
+
+    config = config_store.load_config()
+    receivers = config["receivers"]["video"]
+    idx = _receiver_index(index, len(receivers))
+
+    previous = receivers[idx]
+    receivers[idx] = {
+        **previous,
+        "enabled": update.enabled,
+        "payload_id": update.payload_id,
+        "video_format": update.video_format,
+        "color_format": update.color_format,
+        "amber": update.amber.model_dump(),
+        "blue": update.blue.model_dump(),
+        "sdp_source": "manual",
+    }
     try:
-        store.update_audio_receiver(
-            enabled=enabled,
-            payload_type=payload_type,
-            sampling_mode=sampling_mode,
-            ptime_mode=ptime_mode,
-            source_ip_amber=source_ip_amber,
-            multicast_group_amber=multicast_group_amber,
-            port_amber=port_amber,
-            source_ip_blue=source_ip_blue,
-            multicast_group_blue=multicast_group_blue,
-            port_blue=port_blue,
-        )
-    except ConfigValidationError as e:
-        return RedirectResponse(url=f"/mgmt/media?error={e}", status_code=303)
-    notify_receiver_toggle("audio", 0, enabled)
-    return RedirectResponse(url="/mgmt/media", status_code=303)
+        config_store.save_config(config)
+    except OSError as exc:
+        # Requirement 4.8.3.1: on save failure, show an error and keep the
+        # previous value -- returning 500 without having mutated the saved
+        # file means the caller's already-rendered form (still showing the
+        # old value) simply needs to surface this error, not revert.
+        raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
+
+    log_store.log_event("webgui", "info", f"映像Receiver{index}の設定を更新しました")
+    return {"status": "ok", "receiver": receivers[idx]}
+
+
+@router.put("/api/media/audio/{index}")
+def update_audio_receiver(index: int, update: AudioReceiverUpdate):
+    error = update.validate_choices()
+    if error:
+        raise HTTPException(status_code=422, detail=error)
+
+    config = config_store.load_config()
+    receivers = config["receivers"]["audio"]
+    idx = _receiver_index(index, len(receivers))
+
+    previous = receivers[idx]
+    receivers[idx] = {
+        **previous,
+        "enabled": update.enabled,
+        "payload_id": update.payload_id,
+        "sampling": update.sampling,
+        "packet_time": update.packet_time,
+        "amber": update.amber.model_dump(),
+        "blue": update.blue.model_dump(),
+        "sdp_source": "manual",
+    }
+    try:
+        config_store.save_config(config)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
+
+    log_store.log_event("webgui", "info", f"音声Receiver{index}の設定を更新しました")
+    return {"status": "ok", "receiver": receivers[idx]}

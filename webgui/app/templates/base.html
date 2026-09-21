@@ -3,24 +3,29 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MultiViewer 管理画面</title>
+  <title>{% block title %}MultiViewer{% endblock %}</title>
   <link rel="stylesheet" href="/mgmt/static/css/style.css">
 </head>
 <body>
   <div class="layout">
     <nav class="sidenav">
-      <div class="brand">MultiViewer</div>
-      <a class="{{ 'active' if active_nav == 'dashboard' else '' }}" href="/mgmt/">ダッシュボード</a>
-      <a class="{{ 'active' if active_nav == 'media' else '' }}" href="/mgmt/media">メディアストリーム設定</a>
-      <a class="{{ 'active' if active_nav == 'ptp_nmos' else '' }}" href="/mgmt/ptp-nmos">PTP・NMOS設定</a>
-      <a class="{{ 'active' if active_nav == 'system' else '' }}" href="/mgmt/system">システム設定</a>
-      <div class="sidenav-footer">
-        <a href="/monitor01/" target="_blank">視聴ページを開く &#8594;</a>
-      </div>
+      <div class="sidenav-brand">MultiViewer</div>
+      <a class="sidenav-item {% if active_page == 'dashboard' %}active{% endif %}" href="/mgmt/">ダッシュボード</a>
+      <a class="sidenav-item {% if active_page == 'media' %}active{% endif %}" href="/mgmt/media">メディアストリーム設定</a>
+      <a class="sidenav-item {% if active_page == 'ptp-nmos' %}active{% endif %}" href="/mgmt/ptp-nmos">PTP・NMOS設定</a>
+      <a class="sidenav-item {% if active_page == 'system' %}active{% endif %}" href="/mgmt/system">システム設定</a>
+      <a class="sidenav-item {% if active_page == 'logs' %}active{% endif %}" href="/mgmt/logs">ログ</a>
+      <a class="sidenav-item sidenav-external" href="/monitor01/" target="_blank" rel="noopener">視聴画面を開く &#8599;</a>
     </nav>
     <main class="content">
+      <div id="network-pending-banner" class="banner banner-warning" hidden>
+        <span id="network-pending-text"></span>
+        <button id="network-confirm-btn" class="btn btn-small">この設定を確定する</button>
+      </div>
       {% block content %}{% endblock %}
     </main>
   </div>
+  <script src="/mgmt/static/js/common.js"></script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

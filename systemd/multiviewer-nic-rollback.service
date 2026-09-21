@@ -1,7 +1,12 @@
 [Unit]
-Description=MultiViewer NIC IP change rollback checker (self-lockout prevention)
-Documentation=https://github.com/Panda-Taro/multi_viewer
+Description=MultiViewer NIC rollback safety check (one-shot)
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/opt/multiviewer/scripts/nic_rollback_check.sh
+Environment=MULTIVIEWER_CONFIG_DIR=/etc/multiviewer
+Environment=MULTIVIEWER_LOG_DIR=/var/log/multiviewer
+Environment=MULTIVIEWER_NETPLAN_DIR=/etc/netplan
+ExecStart=/opt/multiviewer/venv/bin/python /opt/multiviewer/nic_rollback_check.py
+User=root

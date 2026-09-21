@@ -1,143 +1,180 @@
 import sys
-import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-
+import pytest
 from fastapi.testclient import TestClient
-from app.main import app
-
-client = TestClient(app)
 
 
-def test_root_redirects_to_mgmt():
-    r = client.get("/", follow_redirects=False)
-    assert r.status_code in (302, 307)
-    assert r.headers["location"] == "/mgmt/"
+@pytest.fixture()
+def client(tmp_path, monkeypatch):
+    config_dir = tmp_path / "etc-multiviewer"
+    log_dir = tmp_path / "var-log-multiviewer"
+    netplan_dir = tmp_path / "etc-netplan"
+    config_dir.mkdir()
+    log_dir.mkdir()
+    netplan_dir.mkdir()
+
+    monkeypatch.setenv("MULTIVIEWER_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("MULTIVIEWER_LOG_DIR", str(log_dir))
+    monkeypatch.setenv("MULTIVIEWER_NETPLAN_DIR", str(netplan_dir))
+
+    # Ensure a completely fresh import graph so every module's path
+    # constants are derived from the env vars set above, not from
+    # whatever a previous test's import left cached.
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            del sys.modules[name]
+
+    from app.main import app
+
+    with TestClient(app) as test_client:
+        yield test_client
 
 
-def test_dashboard_page_renders():
-    r = client.get("/mgmt/")
-    assert r.status_code == 200
-    assert "ダッシュボード" in r.text
+def test_root_redirects_to_mgmt(client):
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code in (302, 307)
+    assert response.headers["location"] == "/mgmt/"
 
 
-def test_media_page_renders():
-    r = client.get("/mgmt/media")
-    assert r.status_code == 200
-    assert "メディアストリーム設定" in r.text
+def test_dashboard_page_renders(client):
+    response = client.get("/mgmt/")
+    assert response.status_code == 200
+    assert "ダッシュボード" in response.text
 
 
-def test_system_page_renders():
-    r = client.get("/mgmt/system")
-    assert r.status_code == 200
-    assert "システム設定" in r.text
+def test_dashboard_status_api(client):
+    response = client.get("/api/dashboard/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["video_receivers"]) == 4
+    assert len(body["audio_receivers"]) == 1
+    assert body["ptp_lock_state"] == "not_implemented"
 
 
-def test_logs_page_renders():
-    r = client.get("/mgmt/logs")
-    assert r.status_code == 200
+def test_media_page_renders(client):
+    response = client.get("/mgmt/media")
+    assert response.status_code == 200
+    assert "映像Receiver" in response.text
 
 
-def test_viewer_page_renders():
-    r = client.get("/monitor01/")
-    assert r.status_code == 200
-    assert "whep-video" in r.text
+def test_update_video_receiver(client):
+    payload = {
+        "enabled": True,
+        "payload_id": 96,
+        "video_format": "59.94i",
+        "color_format": "YCbCr4:2:2_10bit_SDR",
+        "amber": {"source_ip": "10.0.0.1", "group_ip": "239.1.1.1", "port": 5000},
+        "blue": {"source_ip": "10.0.1.1", "group_ip": "239.1.1.2", "port": 5000},
+    }
+    response = client.put("/api/media/video/1", json=payload)
+    assert response.status_code == 200
+    assert response.json()["receiver"]["enabled"] is True
+
+    # Persisted: fetching the dashboard status reflects the change.
+    status = client.get("/api/dashboard/status").json()
+    assert status["video_receivers"][0]["enabled"] is True
 
 
-def test_display_mode_toggle_api():
-    r1 = client.get("/mgmt/")
-    r = client.post("/api/display-mode/toggle")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["mode"] in ("quad", "single")
-    assert isinstance(body["zmq_commands"], list)
+def test_update_video_receiver_rejects_out_of_range_index(client):
+    payload = {
+        "enabled": True,
+        "payload_id": 96,
+        "video_format": "59.94i",
+        "color_format": "YCbCr4:2:2_10bit_SDR",
+        "amber": {"source_ip": "", "group_ip": "", "port": 0},
+        "blue": {"source_ip": "", "group_ip": "", "port": 0},
+    }
+    response = client.put("/api/media/video/5", json=payload)
+    assert response.status_code == 404
 
 
-def test_display_mode_select_single_out_of_range():
-    r = client.post("/api/display-mode/select/9")
-    assert r.status_code == 500 or r.status_code == 400  # LayoutError surfaces as server error
+def test_update_video_receiver_rejects_invalid_video_format(client):
+    payload = {
+        "enabled": True,
+        "payload_id": 96,
+        "video_format": "not-a-real-format",
+        "color_format": "YCbCr4:2:2_10bit_SDR",
+        "amber": {"source_ip": "", "group_ip": "", "port": 0},
+        "blue": {"source_ip": "", "group_ip": "", "port": 0},
+    }
+    response = client.put("/api/media/video/1", json=payload)
+    assert response.status_code == 422
 
 
-def test_media_video_update_then_reflected_on_page():
-    r = client.post(
-        "/mgmt/media/video/0",
-        data={
-            "enabled": "true",
-            "source_ip_amber": "192.168.1.10",
-            "multicast_group_amber": "239.1.1.10",
-            "port_amber": "20000",
-            "source_ip_blue": "192.168.2.10",
-            "multicast_group_blue": "",
-            "port_blue": "0",
-            "payload_type": "112",
-            "video_format_mode": "sdp",
-        },
-        follow_redirects=False,
-    )
-    assert r.status_code == 303
-    page = client.get("/mgmt/media")
-    assert "239.1.1.10" in page.text
-    assert "192.168.2.10" in page.text
+def test_update_ptp(client):
+    response = client.put("/api/ptp", json={"domain": 5})
+    assert response.status_code == 200
+    assert response.json()["ptp"]["domain"] == 5
 
 
-def test_media_video_disable_toggle_shows_unchecked_and_excludes_session():
-    client.post(
-        "/mgmt/media/video/1",
-        data={
-            "enabled": "true",
-            "multicast_group_amber": "239.1.1.11",
-            "port_amber": "20001",
-            "video_format_mode": "sdp",
-        },
-        follow_redirects=False,
-    )
-    r = client.post(
-        "/mgmt/media/video/1",
-        data={
-            # enabled チェックボックス未送信 = 無効化
-            "multicast_group_amber": "239.1.1.11",
-            "port_amber": "20001",
-            "video_format_mode": "sdp",
-        },
-        follow_redirects=False,
-    )
-    assert r.status_code == 303
+def test_display_mode_update(client):
+    response = client.post("/api/display", json={"mode": "single", "single_source": 3})
+    assert response.status_code == 200
+    body = client.get("/api/dashboard/status").json()
+    assert body["display_mode"] == "single"
+    assert body["single_source"] == 3
 
 
-def test_media_video_59i_mode_shows_fixed_format():
-    r = client.post(
-        "/mgmt/media/video/2",
-        data={"video_format_mode": "59i"},
-        follow_redirects=False,
-    )
-    assert r.status_code == 303
-    page = client.get("/mgmt/media")
-    assert "i1080p59" in page.text
+def test_network_apply_requires_confirmed_risk_for_control(client):
+    payload = {
+        "target": "control",
+        "interface": "eth0",
+        "mode": "static",
+        "address": "192.168.1.5",
+        "prefix": 24,
+        "confirmed_risk": False,
+    }
+    response = client.post("/api/network/apply", json=payload)
+    assert response.status_code == 400
 
 
-def test_ptp_nmos_page_renders():
-    r = client.get("/mgmt/ptp-nmos")
-    assert r.status_code == 200
-    assert "PTP・NMOS設定" in r.text
+def test_network_apply_and_confirm_flow(client):
+    payload = {
+        "target": "media_amber",
+        "interface": "eth1",
+        "mode": "static",
+        "address": "192.168.20.5",
+        "prefix": 24,
+        "timeout_seconds": 60,
+    }
+    response = client.post("/api/network/apply", json=payload)
+    assert response.status_code == 200
+    assert response.json()["network_state"]["status"] == "pending_confirm"
+
+    state = client.get("/api/network/state").json()
+    assert state["status"] == "pending_confirm"
+
+    confirm_response = client.post("/api/network/confirm")
+    assert confirm_response.status_code == 200
+    assert confirm_response.json()["network_state"]["status"] == "stable"
 
 
-def test_ptp_update_invalid_shows_error_and_keeps_previous():
-    r = client.post("/mgmt/ptp-nmos/ptp", data={"domain": "999"}, follow_redirects=False)
-    assert r.status_code == 303
-    assert "error=" in r.headers["location"]
+def test_network_apply_rejected_while_already_pending(client):
+    payload = {
+        "target": "media_amber",
+        "interface": "eth1",
+        "mode": "dhcp",
+        "timeout_seconds": 60,
+    }
+    first = client.post("/api/network/apply", json=payload)
+    assert first.status_code == 200
+
+    second = client.post("/api/network/apply", json=payload)
+    assert second.status_code == 409
 
 
-def test_system_viewer_bitrate_out_of_range_rejected():
-    r = client.post(
-        "/mgmt/system/viewer",
-        data={"viewer_path": "monitor01", "bitrate_mbps": "999"},
-        follow_redirects=False,
-    )
-    assert r.status_code == 303
-    assert "error=" in r.headers["location"]
+def test_logs_roundtrip(client):
+    client.put("/api/ptp", json={"domain": 9})  # generates a log event
+    response = client.get("/api/logs")
+    assert response.status_code == 200
+    events = response.json()["events"]
+    assert any("PTP" in e["message"] for e in events)
+
+    export_response = client.get("/api/logs/export")
+    assert export_response.status_code == 200
 
 
-def test_logs_export_returns_plain_text():
-    r = client.get("/mgmt/logs/export")
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("text/plain")
+def test_viewer_placeholder_page(client):
+    response = client.get("/monitor01/")
+    assert response.status_code == 200
+    assert "視聴" in response.text

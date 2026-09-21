@@ -1,40 +1,35 @@
-"""webgui/app/routers/logs.py
-
-対応要件: ④-8 (大画面ログビューア + エクスポート/ダウンロード)、⑤
-"""
 from __future__ import annotations
 
 from pathlib import Path
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse
 from fastapi.templating import Jinja2Templates
 
-from ..log_store import log_store
+from .. import log_store
 
-router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
+router = APIRouter()
 
-@router.get("/mgmt/logs", response_class=HTMLResponse)
-def logs_page(request: Request, component: str | None = None, level: str | None = None):
-    entries = log_store.filter(component=component, level=level)
+
+@router.get("/mgmt/logs")
+def logs_page(request: Request):
     return templates.TemplateResponse(
-        request,
         "logs.html",
-        {
-            "active_nav": "logs",
-            "entries": list(reversed(entries[-500:])),
-            "component": component or "",
-            "level": level or "",
-        },
+        {"request": request, "active_page": "logs"},
     )
 
 
-@router.get("/mgmt/logs/export")
+@router.get("/api/logs")
+def get_logs(limit: int = 500):
+    return {"events": log_store.read_events(limit=min(limit, log_store.MAX_LINES_KEPT))}
+
+
+@router.get("/api/logs/export")
 def export_logs():
-    text = log_store.export_text()
-    return PlainTextResponse(
-        text,
-        headers={"Content-Disposition": "attachment; filename=multiviewer.log"},
-    )
+    path = log_store.export_path()
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    return FileResponse(path, filename="multiviewer-events.log", media_type="text/plain")

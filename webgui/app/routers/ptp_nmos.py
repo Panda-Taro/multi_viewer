@@ -1,70 +1,90 @@
-"""webgui/app/routers/ptp_nmos.py
-
-対応要件: ④-8-4-3 PTP・NMOS設定 (Receiver設定とは別の専用1画面)
-
-更新版要件定義書「4.8 WebGUI」で、PTP設定・NMOS設定はメディアストリーム
-設定(Receiver)とは独立した「1つの画面ですべて表示できるように密度を高く
-する」専用画面として区分されたため、従来 webgui/app/routers/media.py に
-同居していたPTP/NMOS設定ルートをここへ分離した。
-"""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
-from ..config_store import store, ConfigValidationError, NmosSettings
+from .. import config_store, log_store
 
-router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
+router = APIRouter()
 
-@router.get("/mgmt/ptp-nmos", response_class=HTMLResponse)
-def ptp_nmos_page(request: Request, error: str | None = None):
+RDS_DISCOVERY_CHOICES = {"static", "auto"}
+NMOS_API_VERSIONS = {"v1.1", "v1.2", "v1.3"}
+SOURCE_PORT_MODES = {"auto", "manual"}
+
+
+@router.get("/mgmt/ptp-nmos")
+def ptp_nmos_page(request: Request):
+    config = config_store.load_config()
     return templates.TemplateResponse(
-        request,
         "ptp_nmos.html",
-        {
-            "active_nav": "ptp_nmos",
-            "ptp": store.media.ptp,
-            "nmos": store.nmos,
-            "error": error,
-        },
+        {"request": request, "config": config, "active_page": "ptp-nmos"},
     )
 
 
-@router.post("/mgmt/ptp-nmos/ptp")
-def update_ptp(domain: int = Form(24)):
-    try:
-        store.update_ptp_domain(domain)
-    except ConfigValidationError as e:
-        return RedirectResponse(url=f"/mgmt/ptp-nmos?error={e}", status_code=303)
-    return RedirectResponse(url="/mgmt/ptp-nmos", status_code=303)
+class PtpUpdate(BaseModel):
+    domain: int = Field(ge=0, le=127)
 
 
-@router.post("/mgmt/ptp-nmos/nmos")
-def update_nmos(
-    discovery_mode: str = Form("mdns"),
-    registration_address: str = Form(""),
-    registration_port: int = Form(0),
-    is04_version: str = Form("v1.3"),
-    is05_version: str = Form("v1.1"),
-    node_api_port: str = Form("auto"),
-    registration_api_port: str = Form("auto"),
-):
-    candidate = NmosSettings(
-        discovery_mode=discovery_mode,
-        registration_address=registration_address,
-        registration_port=registration_port,
-        is04_version=is04_version,
-        is05_version=is05_version,
-        node_api_port=node_api_port,
-        registration_api_port=registration_api_port,
-    )
+@router.put("/api/ptp")
+def update_ptp(update: PtpUpdate):
+    config = config_store.load_config()
+    config["ptp"]["domain"] = update.domain
     try:
-        store.update_nmos(candidate)
-    except ConfigValidationError as e:
-        return RedirectResponse(url=f"/mgmt/ptp-nmos?error={e}", status_code=303)
-    return RedirectResponse(url="/mgmt/ptp-nmos", status_code=303)
+        config_store.save_config(config)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
+    log_store.log_event("webgui", "info", "PTP設定を更新しました", domain=update.domain)
+    return {"status": "ok", "ptp": config["ptp"]}
+
+
+class RdsStatic(BaseModel):
+    address: str = ""
+    port: int = Field(default=0, ge=0, le=65535)
+    api_version: str = "v1.3"
+
+
+class NmosUpdate(BaseModel):
+    rds_discovery: str
+    rds_static: RdsStatic
+    common_port: int = Field(ge=0, le=65535)
+    source_port_mode: str
+    source_port: Optional[int] = Field(default=None, ge=0, le=65535)
+
+    def validate_choices(self) -> Optional[str]:
+        if self.rds_discovery not in RDS_DISCOVERY_CHOICES:
+            return f"rds_discovery must be one of {sorted(RDS_DISCOVERY_CHOICES)}"
+        if self.rds_static.api_version not in NMOS_API_VERSIONS:
+            return f"rds_static.api_version must be one of {sorted(NMOS_API_VERSIONS)}"
+        if self.source_port_mode not in SOURCE_PORT_MODES:
+            return f"source_port_mode must be one of {sorted(SOURCE_PORT_MODES)}"
+        if self.source_port_mode == "manual" and self.source_port is None:
+            return "source_port is required when source_port_mode is 'manual'"
+        return None
+
+
+@router.put("/api/nmos")
+def update_nmos(update: NmosUpdate):
+    error = update.validate_choices()
+    if error:
+        raise HTTPException(status_code=422, detail=error)
+
+    config = config_store.load_config()
+    config["nmos"] = {
+        "rds_discovery": update.rds_discovery,
+        "rds_static": update.rds_static.model_dump(),
+        "common_port": update.common_port,
+        "source_port_mode": update.source_port_mode,
+        "source_port": update.source_port,
+    }
+    try:
+        config_store.save_config(config)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
+    log_store.log_event("webgui", "info", "NMOS設定を更新しました")
+    return {"status": "ok", "nmos": config["nmos"]}

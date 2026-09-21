@@ -1,117 +1,70 @@
 #!/usr/bin/env bash
-# scripts/setup.sh
-# 対応要件: 配置要件(初回セットアップスクリプト), ⑦(異なるハードウェアへの
-# 再展開はGUI設定のみで済むようにする)
+# First-time setup for MultiViewer step 1 (WebGUI + network safety
+# mechanism) on Ubuntu Server 24.04.4. Idempotent: safe to re-run.
 #
-# 依存パッケージ導入・全コンポーネントのビルド・hugepages設定・systemd
-# ユニットの導入/有効化までを行う。Ubuntu Server 24.04.4を対象とする。
+# What this does:
+#   1. Installs OS packages needed by step 1 (python3, netplan, iproute2).
+#   2. Creates a Python venv under /opt/multiviewer/venv and installs the
+#      WebGUI's dependencies into it.
+#   3. Creates /etc/multiviewer (config store + netplan backups) and
+#      /var/log/multiviewer (event log).
+#   4. Installs and enables the systemd units (webgui service, and the
+#      always-on NIC-rollback safety timer).
 #
-# 実行後は `/mgmt/` (http://<1G NIC IP>/mgmt/) にアクセスし、NIC IP・
-# Receiver設定・NMOS設定等をGUIから行うことで異なるハードウェアへの
-# 再展開が完結する設計 (本スクリプト自体はハードウェア差異を吸収しない)。
+# It does NOT touch any NIC's IP configuration -- that only happens when
+# an operator explicitly applies a change from the WebGUI.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-INSTALL_DIR="${INSTALL_DIR:-/opt/multiviewer}"
-CONFIG_DIR="/etc/multiviewer"
-LOG_DIR="/var/log/multiviewer"
-SERVICE_USER="${SERVICE_USER:-multiviewer}"
+INSTALL_DIR="/opt/multiviewer"
+VENV_DIR="${INSTALL_DIR}/venv"
 
-log() { echo "[setup] $*"; }
+if [[ $EUID -ne 0 ]]; then
+  echo "This script must be run as root (sudo)." >&2
+  exit 1
+fi
 
-require_root() {
-  if [[ "${EUID}" -ne 0 ]]; then
-    echo "root権限で実行してください (sudo $0)" >&2
-    exit 1
-  fi
-}
+echo "==> Installing OS packages"
+apt-get update -qq
+apt-get install -y --no-install-recommends \
+  python3 python3-venv python3-pip netplan.io iproute2
 
-check_os() {
-  if [[ -r /etc/os-release ]]; then
-    . /etc/os-release
-    if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "24.04" ]]; then
-      log "警告: Ubuntu Server 24.04.4を対象としています (検出: ${PRETTY_NAME:-unknown})。続行しますが動作保証外です。"
-    fi
-  fi
-}
+echo "==> Setting up install directory (${INSTALL_DIR})"
+mkdir -p "${INSTALL_DIR}"
+rsync -a --delete --exclude '.git' --exclude '__pycache__' "${REPO_ROOT}/webgui/" "${INSTALL_DIR}/webgui/"
 
-create_service_user() {
-  if ! id "${SERVICE_USER}" &>/dev/null; then
-    log "サービス実行用ユーザ ${SERVICE_USER} を作成"
-    useradd --system --no-create-home --shell /usr/sbin/nologin "${SERVICE_USER}"
-  fi
-}
+echo "==> Creating Python virtualenv"
+if [[ ! -d "${VENV_DIR}" ]]; then
+  python3 -m venv "${VENV_DIR}"
+fi
+"${VENV_DIR}/bin/pip" install --quiet --upgrade pip
+"${VENV_DIR}/bin/pip" install --quiet -r "${INSTALL_DIR}/webgui/requirements.txt"
 
-install_python_stack() {
-  log "Pythonスタック (webgui/bridge) をセットアップ"
-  apt-get update -y
-  apt-get install -y python3 python3-venv python3-pip
-  python3 -m venv "${INSTALL_DIR}/venv"
-  "${INSTALL_DIR}/venv/bin/pip" install --upgrade pip
-  "${INSTALL_DIR}/venv/bin/pip" install -r "${REPO_ROOT}/webgui/requirements.txt"
-  "${INSTALL_DIR}/venv/bin/pip" install fastapi uvicorn pydantic
-}
+echo "==> Creating config/log directories"
+mkdir -p /etc/multiviewer/netplan-backups
+mkdir -p /var/log/multiviewer
 
-sync_repo() {
-  log "リポジトリを ${INSTALL_DIR} へ配置"
-  mkdir -p "${INSTALL_DIR}"
-  rsync -a --exclude ".git" --exclude "**/__pycache__" --exclude "**/tests" \
-    "${REPO_ROOT}/" "${INSTALL_DIR}/"
-}
+echo "==> Installing rollback check script"
+install -m 0755 "${REPO_ROOT}/scripts/nic_rollback_check.py" "${INSTALL_DIR}/nic_rollback_check.py"
+# The check script imports webgui/app as a package relative to its own
+# location, so it needs a copy of the webgui tree next to it too.
+rsync -a --delete --exclude '.git' --exclude '__pycache__' "${REPO_ROOT}/webgui/" "${INSTALL_DIR}/webgui/"
 
-setup_directories() {
-  log "設定/ログディレクトリを作成"
-  mkdir -p "${CONFIG_DIR}/mtl" "${CONFIG_DIR}/mediamtx" "${CONFIG_DIR}/nmos" "${LOG_DIR}"
-  [[ -f "${CONFIG_DIR}/mtl/rx_config.json" ]] || cp "${REPO_ROOT}/mtl/config/rx_config.template.json" "${CONFIG_DIR}/mtl/rx_config.json"
-  cp "${REPO_ROOT}/mediamtx/mediamtx.yml" "${CONFIG_DIR}/mediamtx/mediamtx.yml"
-  cp "${REPO_ROOT}/nmos/config/node_config.json" "${CONFIG_DIR}/nmos/node_config.json"
-  chown -R "${SERVICE_USER}:${SERVICE_USER}" "${LOG_DIR}"
-}
+echo "==> Installing systemd units"
+install -m 0644 "${REPO_ROOT}/systemd/multiviewer-webgui.service" /etc/systemd/system/
+install -m 0644 "${REPO_ROOT}/systemd/multiviewer-nic-rollback.service" /etc/systemd/system/
+install -m 0644 "${REPO_ROOT}/systemd/multiviewer-nic-rollback.timer" /etc/systemd/system/
 
-build_components() {
-  log "MTL/DPDKをビルド (時間がかかります)"
-  bash "${REPO_ROOT}/mtl/scripts/build_mtl.sh"
+systemctl daemon-reload
 
-  log "FFmpeg(MTL連携プラグイン組み込み)をビルド (時間がかかります)"
-  bash "${REPO_ROOT}/mtl/scripts/build_ffmpeg.sh"
+echo "==> Enabling services"
+systemctl enable --now multiviewer-webgui.service
+# The rollback timer is always enabled, independent of whether a NIC
+# change is currently pending -- it is a cheap periodic no-op check when
+# nothing is pending, and is the safety net that must survive across
+# reboots and WebGUI crashes.
+systemctl enable --now multiviewer-nic-rollback.timer
 
-  log "nmos-cppをビルド"
-  bash "${REPO_ROOT}/nmos/scripts/build_nmos_cpp.sh"
-
-  log "MediaMTXをダウンロード"
-  bash "${REPO_ROOT}/scripts/install_mediamtx.sh"
-
-  log "hugepagesを設定"
-  bash "${REPO_ROOT}/mtl/scripts/setup_hugepages.sh"
-}
-
-install_systemd_units() {
-  log "systemdユニットを導入"
-  for unit in "${REPO_ROOT}"/systemd/*.service "${REPO_ROOT}"/systemd/*.timer; do
-    [[ -e "${unit}" ]] || continue
-    cp "${unit}" "/etc/systemd/system/$(basename "${unit}")"
-  done
-  systemctl daemon-reload
-
-  for svc in multiviewer-hugepages multiviewer-mtl-rx multiviewer-compositor \
-             multiviewer-mediamtx multiviewer-nmos-node multiviewer-bridge \
-             multiviewer-webgui; do
-    systemctl enable --now "${svc}.service"
-  done
-  systemctl enable --now multiviewer-nic-rollback.timer
-}
-
-main() {
-  require_root
-  check_os
-  create_service_user
-  sync_repo
-  install_python_stack
-  setup_directories
-  build_components
-  install_systemd_units
-
-  log "セットアップ完了。ブラウザで http://<1G NICのIP>/mgmt/ にアクセスして設定してください。"
-}
-
-main "$@"
+echo "==> Done."
+echo "WebGUI should now be reachable at http://<1G NIC IP>/mgmt/"
+echo "See README.md before changing any NIC's IP address from the WebGUI."

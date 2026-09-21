@@ -1,132 +1,91 @@
-"""webgui/app/routers/dashboard.py
-
-対応要件: ④-8 ダッシュボード (Pane1: プレビュー+モード切替、Pane2: 状態表示)
-"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
+from pathlib import Path
 
-from ..config_store import store
-from ..display_state import display_controller
-from ..status import build_dashboard_status
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
+
+from .. import config_store, log_store, network_state, nic_state, system_stats
+
+templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(__import__("pathlib").Path(__file__).parent.parent / "templates"))
 
 
-def _collect_status():
-    try:
-        import psutil
-
-        cpu = psutil.cpu_percent(interval=None)
-    except Exception:
-        cpu = 0.0
-
-    receiver_activity = []
-    for i, v in enumerate(store.media.videos):
-        receiver_activity.append(
-            {
-                "label": f"Video Receiver {i + 1}",
-                "enabled": v.enabled,
-                "amber_active": bool(v.multicast_group_amber),
-                "blue_active": bool(v.multicast_group_blue),
-                "configured": v.is_configured(),
-            }
-        )
-    receiver_activity.append(
-        {
-            "label": "Audio Receiver 1",
-            "enabled": store.media.audio.enabled,
-            "amber_active": bool(store.media.audio.multicast_group_amber),
-            "blue_active": bool(store.media.audio.multicast_group_blue),
-            "configured": store.media.audio.is_configured(),
-        }
-    )
-
-    from ..nic_state import read_nic_state, NicStateError
-
-    try:
-        nics = read_nic_state()
-        bandwidth = {n.name: 0.0 for n in nics}  # 実機では/sys/class/net統計から算出
-    except NicStateError:
-        bandwidth = {}
-
-    viewer_url = f"http://{store.nic.control_ip_cidr.split('/')[0]}/{store.viewer.viewer_path}/"
-
-    return build_dashboard_status(
-        cpu_percent=cpu,
-        nic_bandwidth_mbps=bandwidth,
-        receiver_activity=receiver_activity,
-        ptp_locked=False,  # 実機ではmtl/scripts/ptp_status.shの結果を反映
-        ptp_source="unknown",
-        viewer_url=viewer_url,
-    )
-
-
-@router.get("/mgmt/", response_class=HTMLResponse)
+@router.get("/mgmt/")
 def dashboard_page(request: Request):
-    status = _collect_status()
+    config = config_store.load_config()
     return templates.TemplateResponse(
-        request,
         "dashboard.html",
         {
-            "active_nav": "dashboard",
-            "status": status,
-            "display_mode": display_controller.mode.value,
-            "selected_index": display_controller.selected_index,
-            "format_alarm": display_controller.format_alarm,
+            "request": request,
+            "config": config,
+            "active_page": "dashboard",
         },
     )
 
 
-@router.post("/api/display-mode/toggle")
-def toggle_display_mode():
-    """④-4: WebGUI・視聴ページ共通の表示モード切替API。1秒以内の反映を狙い、
-    FFmpeg zmqフィルタへのランタイムコマンド送出のみで処理する(プロセス再起動なし)。
-    """
-    commands = display_controller.toggle()
-    return JSONResponse(
-        {
-            "mode": display_controller.mode.value,
-            "selected_index": display_controller.selected_index,
-            "zmq_commands": commands,
+@router.get("/api/dashboard/status")
+def dashboard_status():
+    config = config_store.load_config()
+    interfaces = {i["name"]: i for i in nic_state.list_interfaces()}
+
+    def nic_summary(nic_cfg: dict) -> dict:
+        live = interfaces.get(nic_cfg.get("interface"))
+        return {
+            "interface": nic_cfg.get("interface"),
+            "configured_mode": nic_cfg.get("mode"),
+            "configured_address": nic_cfg.get("address"),
+            "link_state": live["state"] if live else "unknown",
+            "live_addresses": live["addresses"] if live else [],
         }
-    )
+
+    video_leds = [
+        {"id": idx + 1, "enabled": r["enabled"], "state": "receiving" if r["enabled"] else "disabled"}
+        for idx, r in enumerate(config["receivers"]["video"])
+    ]
+    audio_leds = [
+        {"id": idx + 1, "enabled": r["enabled"], "state": "receiving" if r["enabled"] else "disabled"}
+        for idx, r in enumerate(config["receivers"]["audio"])
+    ]
+
+    return {
+        "nics": {
+            "media_amber": nic_summary(config["network"]["media_amber"]),
+            "media_blue": nic_summary(config["network"]["media_blue"]),
+            "control": nic_summary(config["network"]["control"]),
+        },
+        "cpu_percent": system_stats.cpu_percent(),
+        "memory_percent": system_stats.memory_percent(),
+        "video_receivers": video_leds,
+        "audio_receivers": audio_leds,
+        # PTP lock state is reported by the PTP client implemented in a
+        # later step; step 1 exposes the field as "not_implemented" so the
+        # dashboard layout and polling logic do not need to change later.
+        "ptp_lock_state": "not_implemented",
+        "display_mode": config["display"]["mode"],
+        "single_source": config["display"]["single_source"],
+        "viewer_url_path": config["streaming"]["url_path"],
+        "network_pending": network_state.load_state(),
+    }
 
 
-@router.post("/api/display-mode/select/{index}")
-def select_single(index: int):
-    """④-4: シングル表示モードで表示するReceiverを選択する。"""
-    from fastapi import HTTPException
-    from layout import DisplayMode, LayoutError  # compositor/ (display_state.pyがsys.path登録済み)
+class DisplayModeUpdate(BaseModel):
+    mode: str = Field(pattern="^(quad|single)$")
+    single_source: int = Field(ge=1, le=4)
 
+
+@router.post("/api/display")
+def update_display_mode(update: DisplayModeUpdate):
+    config = config_store.load_config()
+    config["display"]["mode"] = update.mode
+    config["display"]["single_source"] = update.single_source
     try:
-        commands = display_controller.set_mode(DisplayMode.SINGLE, selected_index=index)
-    except LayoutError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return JSONResponse(
-        {
-            "mode": display_controller.mode.value,
-            "selected_index": display_controller.selected_index,
-            "zmq_commands": commands,
-        }
+        config_store.save_config(config)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
+    log_store.log_event(
+        "webgui", "info", "表示モードを変更しました", mode=update.mode, single_source=update.single_source
     )
-
-
-@router.get("/api/status")
-def api_status():
-    status = _collect_status()
-    return JSONResponse(
-        {
-            "cpu_percent": status.cpu_percent,
-            "nic_bandwidth_mbps": status.nic_bandwidth_mbps,
-            "ptp_locked": status.ptp_locked,
-            "ptp_source": status.ptp_source,
-            "viewer_url": status.viewer_url,
-            "receivers": [
-                {"label": r.label, "led": r.led.value} for r in status.receivers
-            ],
-        }
-    )
+    return {"status": "ok", "display": config["display"]}

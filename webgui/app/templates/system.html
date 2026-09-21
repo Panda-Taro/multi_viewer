@@ -1,63 +1,92 @@
 {% extends "base.html" %}
+{% block title %}システム設定 - MultiViewer{% endblock %}
 {% block content %}
 <h1>システム設定</h1>
-{% if error %}<div class="alert-error">保存に失敗しました: {{ error }} (前の設定を維持しています)</div>{% endif %}
-{% if notice %}<div class="alert-notice">{{ notice }}</div>{% endif %}
 
-<h2>OSから読み取った実NIC状態</h2>
-<table>
-  <tr><th>名前</th><th>MAC</th><th>状態</th><th>IPv4</th></tr>
-  {% for n in os_nics %}
-  <tr><td>{{ n.name }}</td><td>{{ n.mac }}</td><td>{{ 'UP' if n.up else 'DOWN' }}</td><td>{{ n.ipv4_addresses | join(', ') }}</td></tr>
-  {% else %}
-  <tr><td colspan="4">取得できませんでした(非Linux環境、またはip未インストール)</td></tr>
-  {% endfor %}
-</table>
+<div class="panel">
+  <div class="panel-title">NICアドレス設定（OSレベルのネットワーク設定）</div>
+  <p class="help-text">
+    設定を適用すると、現在のnetplan設定をバックアップした上で新しい設定を書き込み、サーバーを再起動します。
+    再起動後、<strong>{{ rollback_timeout_default // 60 }}分</strong>以内にこの画面から「この設定を確定する」を
+    行わない場合、自動的に以前の設定へロールバックして再度再起動します。
+  </p>
+  <p class="help-text" style="color: var(--warn)">
+    制御用1GNIC（WebGUI/SSHアクセスに使用）の変更は、メディア用10GNICより復旧が難しくなります。
+    変更前に、SSH以外の復旧手段（物理コンソール等）を確保してください。
+  </p>
 
-{% if pending_changes %}
-<h2>保留中のIP変更 (再起動待ち)</h2>
-<table>
-  <tr><th>NIC</th><th>旧IP</th><th>新IP</th><th>確認期限</th></tr>
-  {% for c in pending_changes %}
-  <tr><td>{{ c.nic_name }}</td><td>{{ c.previous_ip_cidr }}</td><td>{{ c.new_ip_cidr }}</td><td>{{ c.confirm_deadline }}</td></tr>
-  {% endfor %}
-</table>
-<p class="alert-notice">再起動後、期限内に新IPへの到達が確認できなければ自動的に旧IPへロールバックされます。</p>
-{% endif %}
+  <div class="system-grid" id="nic-forms">
+    {% for target, label, risky in [
+      ("control", "制御用1GNIC (WebGUI / SSH)", true),
+      ("media_amber", "メディア用10GNIC - Amber (A系)", false),
+      ("media_blue", "メディア用10GNIC - Blue (B系)", false),
+    ] %}
+    <div class="panel" data-target="{{ target }}">
+      <div class="panel-title">
+        {{ label }}
+        {% if risky %}<span class="tag risk">高リスク</span>{% endif %}
+      </div>
+      <div class="form-row">
+        <label>インターフェース</label>
+        <select data-field="interface">
+          <option value="">選択してください</option>
+          {% for ifname in physical_interfaces %}
+          <option value="{{ ifname }}" {% if config.network[target].interface == ifname %}selected{% endif %}>{{ ifname }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-row">
+        <label>モード</label>
+        <select data-field="mode">
+          <option value="static" {% if config.network[target].mode == "static" %}selected{% endif %}>静的IP</option>
+          <option value="dhcp" {% if config.network[target].mode == "dhcp" %}selected{% endif %}>DHCP</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>IPアドレス</label>
+        <input type="text" data-field="address" placeholder="例: 192.168.10.10" value="{{ config.network[target].address }}">
+      </div>
+      <div class="form-row">
+        <label>プレフィックス長</label>
+        <input type="number" data-field="prefix" min="1" max="32" value="{{ config.network[target].prefix }}">
+      </div>
+      <div class="form-row">
+        <label>ゲートウェイ</label>
+        <input type="text" data-field="gateway" placeholder="任意" value="{{ config.network[target].gateway }}">
+      </div>
+      {% if risky %}
+      <div class="checkbox-row">
+        <input type="checkbox" data-field="confirmed_risk" id="risk-{{ target }}">
+        <label for="risk-{{ target }}">制御NICの変更に伴うアクセス不能のリスクを理解しました</label>
+      </div>
+      {% endif %}
+      <button class="btn btn-small" data-role="apply">適用して再起動を予約</button>
+      <span class="save-status" data-role="status"></span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
 
-<h2>NIC IP設定 (10G x2 + 1G x1)</h2>
-<form class="settings-form" method="post" action="/mgmt/system/nic">
-  <label>Amber (10G) インターフェース名</label>
-  <input type="text" name="amber_name" value="{{ nic.amber_name }}">
-  <label>Amber IP (CIDR)</label>
-  <input type="text" name="amber_ip_cidr" value="{{ nic.amber_ip_cidr }}">
-  <label>Blue (10G) インターフェース名</label>
-  <input type="text" name="blue_name" value="{{ nic.blue_name }}">
-  <label>Blue IP (CIDR)</label>
-  <input type="text" name="blue_ip_cidr" value="{{ nic.blue_ip_cidr }}">
-  <label>制御 (1G) インターフェース名</label>
-  <input type="text" name="control_name" value="{{ nic.control_name }}">
-  <label>制御IP (CIDR)</label>
-  <input type="text" name="control_ip_cidr" value="{{ nic.control_ip_cidr }}">
-  <button type="submit">保存 (適用にはサーバ再起動が必要です)</button>
-</form>
+<div class="panel">
+  <div class="panel-title">視聴用配信設定</div>
+  <div class="form-row">
+    <label>送信レート (Mbps)</label>
+    <input type="number" id="streaming-bitrate" min="10" max="50" value="{{ config.streaming.bitrate_mbps }}">
+  </div>
+  <div class="form-row">
+    <label>視聴URLパス</label>
+    <input type="text" id="streaming-url-path" value="{{ config.streaming.url_path }}">
+  </div>
+  <p class="help-text">実際の配信（WebRTC/MediaMTX）は後続ステップで実装されます。ここでは設定値の保存のみです。</p>
+  <button class="btn btn-small" id="streaming-save">保存</button>
+  <span class="save-status" id="streaming-status"></span>
+</div>
 
-<h2>視聴配信設定</h2>
-<form class="settings-form" method="post" action="/mgmt/system/viewer">
-  <label>視聴URLパス (http://(1G NIC IP)/&lt;path&gt;/)</label>
-  <input type="text" name="viewer_path" value="{{ viewer.viewer_path }}">
-  <label>ビットレート (10-50 Mbps)</label>
-  <input type="number" name="bitrate_mbps" min="10" max="50" value="{{ viewer.bitrate_mbps }}">
-  <button type="submit">保存</button>
-</form>
-
-<h2>ログ</h2>
-<p><a href="/mgmt/logs">全ログを表示(絞り込み検索)</a> | <a href="/mgmt/logs/export">ログをダウンロード (.log)</a></p>
-<section class="pane" style="max-height: 40vh;">
-  {% for e in recent_log_entries %}
-  <div class="log-line">{{ e.format_line() }}</div>
-  {% else %}
-  <div class="log-line">ログはまだありません</div>
-  {% endfor %}
-</section>
+<div class="panel">
+  <div class="panel-title">ログ</div>
+  <p>ログの表示・エクスポートは<a href="/mgmt/logs">ログ画面</a>から行えます。</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/mgmt/static/js/system.js"></script>
 {% endblock %}

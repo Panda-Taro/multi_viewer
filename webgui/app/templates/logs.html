@@ -1,23 +1,40 @@
 {% extends "base.html" %}
+{% block title %}ログ - MultiViewer{% endblock %}
 {% block content %}
 <h1>ログ</h1>
-<form class="settings-form" method="get" action="/mgmt/logs" style="flex-direction:row; align-items:end; gap:12px;">
-  <div>
-    <label>コンポーネント</label>
-    <input type="text" name="component" value="{{ component }}" placeholder="例: PTP, NMOS, bridge">
+<div class="panel">
+  <div style="display:flex; justify-content: space-between; align-items:center; margin-bottom: 0.6rem;">
+    <div class="panel-title" style="margin:0">イベントログ</div>
+    <div>
+      <button class="btn btn-small btn-secondary" id="logs-refresh">更新</button>
+      <a class="btn btn-small" href="/api/logs/export" download="multiviewer-events.log">エクスポート</a>
+    </div>
   </div>
-  <div>
-    <label>レベル</label>
-    <input type="text" name="level" value="{{ level }}" placeholder="例: INFO, WARN, ERROR">
-  </div>
-  <button type="submit">絞り込み</button>
-</form>
-<p><a href="/mgmt/logs/export">ログをダウンロード (.log)</a></p>
-<section class="pane" style="max-height: 60vh;">
-  {% for e in entries %}
-  <div class="log-line">{{ e.format_line() }}</div>
-  {% else %}
-  <div class="log-line">ログはまだありません</div>
-  {% endfor %}
-</section>
+  <table class="log-table">
+    <thead>
+      <tr><th>日時 (UTC)</th><th>種別</th><th>レベル</th><th>メッセージ</th></tr>
+    </thead>
+    <tbody id="log-rows"></tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function loadLogs() {
+  const res = await fetch("/api/logs?limit=500");
+  const data = await res.json();
+  const rows = document.getElementById("log-rows");
+  rows.innerHTML = "";
+  data.events.forEach((e) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${e.timestamp}</td><td>${e.source}</td>` +
+      `<td class="log-level-${e.level}">${e.level}</td><td>${e.message}</td>`;
+    rows.appendChild(tr);
+  });
+}
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("logs-refresh").addEventListener("click", loadLogs);
+  loadLogs();
+});
+</script>
 {% endblock %}
