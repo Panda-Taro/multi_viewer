@@ -73,6 +73,16 @@ def _receiver_index(index: int, count: int) -> int:
     return index - 1
 
 
+@router.get("/api/media/receivers")
+def get_receivers():
+    """Polled by media.js so receivers currently driven by NMOS
+    (sdp_source == "nmos") reflect IS-05 activate calls in near-real-time
+    on the WebGUI (requirement 4.8.4.2.1.3), without the operator having to
+    reload the page."""
+    config = config_store.load_config()
+    return {"video": config["receivers"]["video"], "audio": config["receivers"]["audio"]}
+
+
 @router.put("/api/media/video/{index}")
 def update_video_receiver(index: int, update: VideoReceiverUpdate):
     error = update.validate_choices()

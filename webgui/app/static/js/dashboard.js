@@ -20,6 +20,17 @@ async function refreshDashboard() {
   document.getElementById("nic-amber").textContent = nicText(data.nics.media_amber);
   document.getElementById("nic-blue").textContent = nicText(data.nics.media_blue);
 
+  const nmosLabels = {
+    disabled: "無効（未設定 または mDNS自動発見は未実装）",
+    registering: "登録中...",
+    registered: "登録済み",
+    error: "エラー",
+  };
+  const nmos = data.nmos || {};
+  const nmosText = nmosLabels[nmos.registration_status] || nmos.registration_status || "不明";
+  document.getElementById("nmos-status").textContent =
+    nmos.rds_url ? `${nmosText} (${nmos.rds_url})` : nmosText;
+
   const videoRows = document.getElementById("video-led-rows");
   videoRows.innerHTML = "";
   data.video_receivers.forEach((r) => {

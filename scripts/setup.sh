@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# First-time setup for MultiViewer step 1 (WebGUI + NIC network config) on
-# Ubuntu Server 24.04.4. Idempotent: safe to re-run.
+# First-time setup for MultiViewer step 1 + 2a (WebGUI, OS network config,
+# and the NMOS service) on Ubuntu Server 24.04.4. Idempotent: safe to
+# re-run.
 #
 # What this does:
-#   1. Installs OS packages needed by step 1 (python3, netplan, iproute2).
+#   1. Installs OS packages (python3, netplan, iproute2).
 #   2. Creates a Python venv under /opt/multiviewer/venv and installs the
-#      WebGUI's dependencies into it.
+#      WebGUI's dependencies into it (shared by both services below).
 #   3. Creates /etc/multiviewer (config store) and /var/log/multiviewer
 #      (event log).
-#   4. Installs and enables the WebGUI systemd unit.
+#   4. Installs and enables two systemd units:
+#        - multiviewer-webgui.service: the WebGUI (port 80)
+#        - multiviewer-nmos.service:   IS-04 registration client + IS-05
+#                                       Connection API (port from
+#                                       nmos.common_port, set via WebGUI)
 #
 # It does NOT touch any NIC's IP configuration -- that only happens when
 # an operator explicitly applies a change from the WebGUI (which reboots
@@ -44,13 +49,20 @@ echo "==> Creating config/log directories"
 mkdir -p /etc/multiviewer
 mkdir -p /var/log/multiviewer
 
-echo "==> Installing systemd unit"
+echo "==> Installing systemd units"
 install -m 0644 "${REPO_ROOT}/systemd/multiviewer-webgui.service" /etc/systemd/system/
+install -m 0644 "${REPO_ROOT}/systemd/multiviewer-nmos.service" /etc/systemd/system/
 
 systemctl daemon-reload
 
-echo "==> Enabling service"
+echo "==> Enabling services"
 systemctl enable --now multiviewer-webgui.service
+# multiviewer-nmos.service reads nmos.common_port from config.json at its
+# own startup; if it is 0 (unset) the service logs an error and exits, and
+# systemd's Restart=on-failure retries it every 10s harmlessly until the
+# operator sets a port from the WebGUI's "PTP・NMOS設定" screen and
+# restarts it (or the retry loop picks it up on its own).
+systemctl enable --now multiviewer-nmos.service
 
 echo "==> Done."
 echo "WebGUI should now be reachable at http://<1G NIC IP>/mgmt/"

@@ -1,0 +1,266 @@
+"""IS-05 (Connection API) -- Receiver-only, requirement 4.7.2 / 6.3.2.
+
+Implements the `single/receivers/{id}/{constraints,staged,active,
+transporttype}` resources of the AMWA NMOS IS-05 Connection API for our 5
+fixed Receivers (no Sender resources -- this system never sends).
+
+`staged` state lives in memory only (per-process); `active` state is
+derived from config.json (config_store), since that is what the rest of
+this system (WebGUI, and later the MTL bridge) reads. Activating a staged
+change (`activation.mode == "activate_immediate"`) copies the staged
+transport params into config.json and marks the receiver's `sdp_source` as
+"nmos" (requirement 4.8.4.2.1.3 -- the WebGUI reflects this in real time by
+polling the same config).
+
+Only `activate_immediate` is supported; scheduled activation
+(`activate_scheduled_absolute`/`_relative`) is rejected with 400 -- no
+external controller behaviour in this NMOS-Testing-Tool-free environment
+was available to validate a scheduler against, so it was left out rather
+than shipped unverified. See NOTES.md.
+"""
+from __future__ import annotations
+
+import threading
+import time
+from typing import Any, Optional
+
+from fastapi import APIRouter, Body, HTTPException
+
+from .. import config_store, log_store
+from . import identity as identity_module
+from . import sdp as sdp_module
+
+router = APIRouter()
+
+SUPPORTED_VERSIONS = ("v1.0", "v1.1")
+
+_staged_lock = threading.Lock()
+_staged: dict[str, dict] = {}
+
+
+def _tai_now() -> str:
+    now = time.time()
+    sec = int(now)
+    nsec = int((now - sec) * 1e9)
+    return f"{sec}:{nsec}"
+
+
+def _check_version(version: str) -> None:
+    if version not in SUPPORTED_VERSIONS:
+        raise HTTPException(status_code=404, detail=f"unsupported IS-05 version: {version}")
+
+
+def _receiver_kind_index(receiver_id: str) -> tuple[str, int]:
+    identity = identity_module.load_identity()
+    lookup = identity_module.receiver_lookup(identity)
+    if receiver_id not in lookup:
+        raise HTTPException(status_code=404, detail="unknown receiver id")
+    return lookup[receiver_id]
+
+
+def _receiver_config(config: dict, kind: str, index: int) -> dict:
+    return config["receivers"][kind][index]
+
+
+def _leg_from_config(endpoint: dict, enabled: bool) -> dict:
+    return {
+        "source_ip": endpoint["source_ip"] or None,
+        "multicast_ip": endpoint["group_ip"] or None,
+        "interface_ip": "auto",
+        "destination_port": endpoint["port"] or "auto",
+        "rtp_enabled": enabled,
+    }
+
+
+def _active_from_config(receiver_cfg: dict) -> dict:
+    has_sdp = bool(receiver_cfg.get("nmos_sdp"))
+    return {
+        "sender_id": None,
+        "master_enable": receiver_cfg["enabled"],
+        "activation": {"mode": None, "requested_time": None, "activation_time": None},
+        "transport_file": {
+            "data": receiver_cfg.get("nmos_sdp"),
+            "type": "application/sdp" if has_sdp else None,
+        },
+        "transport_params": [
+            _leg_from_config(receiver_cfg["amber"], receiver_cfg["enabled"]),
+            _leg_from_config(receiver_cfg["blue"], receiver_cfg["enabled"]),
+        ],
+    }
+
+
+def _get_or_init_staged(receiver_id: str, kind: str, index: int) -> dict:
+    with _staged_lock:
+        if receiver_id not in _staged:
+            config = config_store.load_config()
+            _staged[receiver_id] = _active_from_config(_receiver_config(config, kind, index))
+        return _staged[receiver_id]
+
+
+def reset_staged_cache() -> None:
+    """Test hook: clears the in-memory staged state between test cases."""
+    with _staged_lock:
+        _staged.clear()
+
+
+@router.get("/x-nmos/")
+def root_index() -> list[str]:
+    return ["connection/"]
+
+
+@router.get("/x-nmos/connection/")
+def connection_index() -> list[str]:
+    return [f"{v}/" for v in SUPPORTED_VERSIONS]
+
+
+@router.get("/x-nmos/connection/{version}/")
+def version_index(version: str) -> list[str]:
+    _check_version(version)
+    return ["single/"]
+
+
+@router.get("/x-nmos/connection/{version}/single/")
+def single_index(version: str) -> list[str]:
+    _check_version(version)
+    return ["receivers/"]
+
+
+@router.get("/x-nmos/connection/{version}/single/receivers/")
+def list_receivers(version: str) -> list[str]:
+    _check_version(version)
+    identity = identity_module.load_identity()
+    ids = list(identity["video_receiver_ids"]) + list(identity["audio_receiver_ids"])
+    return [f"{rid}/" for rid in ids]
+
+
+@router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/")
+def receiver_index(version: str, receiver_id: str) -> list[str]:
+    _check_version(version)
+    _receiver_kind_index(receiver_id)
+    return ["constraints/", "staged/", "active/", "transporttype/"]
+
+
+@router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/constraints/")
+def get_constraints(version: str, receiver_id: str) -> list[dict]:
+    _check_version(version)
+    _receiver_kind_index(receiver_id)
+    return [{}, {}]  # unconstrained, one object per leg (Amber, Blue)
+
+
+@router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/transporttype/")
+def get_transport_type(version: str, receiver_id: str) -> str:
+    _check_version(version)
+    _receiver_kind_index(receiver_id)
+    return "urn:x-nmos:transport:rtp.mcast"
+
+
+@router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/staged/")
+def get_staged(version: str, receiver_id: str) -> dict:
+    _check_version(version)
+    kind, index = _receiver_kind_index(receiver_id)
+    return _get_or_init_staged(receiver_id, kind, index)
+
+
+@router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/active/")
+def get_active(version: str, receiver_id: str) -> dict:
+    _check_version(version)
+    kind, index = _receiver_kind_index(receiver_id)
+    config = config_store.load_config()
+    return _active_from_config(_receiver_config(config, kind, index))
+
+
+@router.patch("/x-nmos/connection/{version}/single/receivers/{receiver_id}/staged/")
+def patch_staged(version: str, receiver_id: str, patch: dict = Body(...)) -> dict:
+    _check_version(version)
+    kind, index = _receiver_kind_index(receiver_id)
+    staged = _get_or_init_staged(receiver_id, kind, index)
+
+    with _staged_lock:
+        if "sender_id" in patch:
+            staged["sender_id"] = patch["sender_id"]
+
+        if "master_enable" in patch:
+            staged["master_enable"] = bool(patch["master_enable"])
+
+        if "transport_params" in patch:
+            incoming = patch["transport_params"]
+            if not isinstance(incoming, list) or len(incoming) != 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail="transport_params must be a 2-element array (leg 0 = Amber, leg 1 = Blue)",
+                )
+            for leg, update in zip(staged["transport_params"], incoming):
+                leg.update(update)
+
+        if "transport_file" in patch:
+            staged["transport_file"] = patch["transport_file"] or {"data": None, "type": None}
+            data = staged["transport_file"].get("data")
+            if data:
+                _apply_sdp_to_staged_transport_params(staged, data)
+
+        if "activation" in patch and patch["activation"]:
+            mode = patch["activation"].get("mode")
+            if mode not in (None, "activate_immediate"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"activation mode '{mode}' is not supported yet (only activate_immediate)",
+                )
+            staged["activation"] = {
+                "mode": mode,
+                "requested_time": patch["activation"].get("requested_time"),
+                "activation_time": None,
+            }
+            if mode == "activate_immediate":
+                _activate(kind, index, receiver_id, staged)
+                staged["activation"]["activation_time"] = _tai_now()
+
+        return staged
+
+
+def _apply_sdp_to_staged_transport_params(staged: dict, sdp_text: str) -> None:
+    legs = sdp_module.parse_sdp(sdp_text)
+    if not legs:
+        return
+    amber = legs[0]
+    blue = legs[1] if len(legs) > 1 else legs[0]
+    for leg_state, parsed in zip(staged["transport_params"], (amber, blue)):
+        if parsed.get("source_ip"):
+            leg_state["source_ip"] = parsed["source_ip"]
+        if parsed.get("group_ip"):
+            leg_state["multicast_ip"] = parsed["group_ip"]
+        if parsed.get("port"):
+            leg_state["destination_port"] = parsed["port"]
+
+
+def _activate(kind: str, index: int, receiver_id: str, staged: dict) -> None:
+    payload_type: Optional[int] = None
+    sdp_text = staged.get("transport_file", {}).get("data")
+    if sdp_text:
+        legs = sdp_module.parse_sdp(sdp_text)
+        if legs and legs[0].get("payload_type") is not None:
+            payload_type = legs[0]["payload_type"]
+
+    config = config_store.load_config()
+    receiver_cfg = _receiver_config(config, kind, index)
+
+    receiver_cfg["enabled"] = staged["master_enable"]
+    for endpoint_key, leg in zip(("amber", "blue"), staged["transport_params"]):
+        endpoint = receiver_cfg[endpoint_key]
+        endpoint["source_ip"] = leg.get("source_ip") or ""
+        endpoint["group_ip"] = leg.get("multicast_ip") or ""
+        port = leg.get("destination_port")
+        if isinstance(port, int):
+            endpoint["port"] = port
+    if payload_type is not None:
+        receiver_cfg["payload_id"] = payload_type
+    receiver_cfg["sdp_source"] = "nmos"
+    receiver_cfg["nmos_sdp"] = sdp_text
+
+    config_store.save_config(config)
+    log_store.log_event(
+        "nmos",
+        "info",
+        f"IS-05 activateにより{kind} Receiver{index + 1}の設定を更新しました",
+        receiver_id=receiver_id,
+        master_enable=staged["master_enable"],
+    )

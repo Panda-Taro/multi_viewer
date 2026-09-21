@@ -57,9 +57,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "nmos": {
         "rds_discovery": "static",  # "static" | "auto"
         "rds_static": {"address": "", "port": 0, "api_version": "v1.3"},
-        "common_port": 0,  # channelmapping/connection/events/node
+        "common_port": 8080,  # channelmapping/connection/events/node
         "source_port_mode": "auto",  # "auto" | "manual"
         "source_port": None,
+    },
+    # Stable IS-04 resource identifiers. Generated once (uuid4) on first use
+    # by webgui/app/nmos/identity.py and persisted here so the Node keeps
+    # the same identity across restarts -- re-registering with a different
+    # Node ID each time would create duplicate Nodes in the RDS instead of
+    # updating the existing one.
+    "identity": {
+        "node_id": None,
+        "device_id": None,
+        "video_receiver_ids": [None, None, None, None],
+        "audio_receiver_ids": [None],
     },
     "network": {
         "media_amber": dict(_DEFAULT_NIC),

@@ -1,0 +1,18 @@
+[Unit]
+Description=MultiViewer NMOS service (IS-04 Registration client + IS-05 Connection API)
+After=network-online.target multiviewer-webgui.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/multiviewer/webgui
+Environment=MULTIVIEWER_CONFIG_DIR=/etc/multiviewer
+Environment=MULTIVIEWER_LOG_DIR=/var/log/multiviewer
+Environment=MULTIVIEWER_NETPLAN_DIR=/etc/netplan
+ExecStart=/opt/multiviewer/venv/bin/python -m app.nmos_main
+Restart=on-failure
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target

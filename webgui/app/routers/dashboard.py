@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from .. import config_store, log_store, nic_state, system_stats
+from ..nmos import status_store as nmos_status_store
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
@@ -67,6 +68,7 @@ def dashboard_status():
         "display_mode": config["display"]["mode"],
         "single_source": config["display"]["single_source"],
         "viewer_url_path": config["streaming"]["url_path"],
+        "nmos": nmos_status_store.read_status(),
     }
 
 

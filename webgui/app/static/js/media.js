@@ -90,9 +90,45 @@ async function saveCard(card) {
   }
 }
 
+// Requirement 4.8.4.2.1.3: when NMOS (IS-05 activate) has set a
+// receiver's values, the WebGUI reflects them in near-real-time. We only
+// overwrite a card's fields here while it is NMOS-driven (sdp_source ==
+// "nmos"); a manually-configured card is left alone so this polling never
+// clobbers an operator's in-progress edit.
+function applyServerReceiver(card, receiver) {
+  if (!receiver) return;
+  const badge = card.querySelector('[data-role="nmos-badge"]');
+  const isNmos = receiver.sdp_source === "nmos";
+  card.dataset.sdpSource = receiver.sdp_source;
+  badge.hidden = !isNmos;
+  if (isNmos) {
+    writeCard(card, receiver);
+    snapshots.set(card, readCard(card));
+  }
+}
+
+async function pollNmosReceivers() {
+  try {
+    const res = await fetch("/api/media/receivers");
+    if (!res.ok) return;
+    const data = await res.json();
+    document.querySelectorAll('.receiver-card[data-kind="video"]').forEach((card) => {
+      const idx = parseInt(card.dataset.index, 10) - 1;
+      applyServerReceiver(card, data.video[idx]);
+    });
+    document.querySelectorAll('.receiver-card[data-kind="audio"]').forEach((card) => {
+      const idx = parseInt(card.dataset.index, 10) - 1;
+      applyServerReceiver(card, data.audio[idx]);
+    });
+  } catch (e) {
+    // Best-effort polling; a failed poll should not disrupt the page.
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll(".receiver-card").forEach((card) => {
     snapshots.set(card, readCard(card));
     card.querySelector('[data-role="save"]').addEventListener("click", () => saveCard(card));
   });
+  setInterval(pollNmosReceivers, 5000);
 });

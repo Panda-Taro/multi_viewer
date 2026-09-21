@@ -25,10 +25,12 @@ def isolated_dirs(tmp_path, monkeypatch):
     monkeypatch.setenv("MULTIVIEWER_NETPLAN_DIR", str(netplan_dir))
 
     from app import config_store, log_store, nic_ip_change
+    from app.nmos import status_store as nmos_status_store
 
     importlib.reload(config_store)
     importlib.reload(log_store)
     importlib.reload(nic_ip_change)
+    importlib.reload(nmos_status_store)
 
     return {
         "config_dir": config_dir,
