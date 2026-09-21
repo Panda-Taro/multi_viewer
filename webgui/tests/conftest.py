@@ -24,11 +24,10 @@ def isolated_dirs(tmp_path, monkeypatch):
     monkeypatch.setenv("MULTIVIEWER_LOG_DIR", str(log_dir))
     monkeypatch.setenv("MULTIVIEWER_NETPLAN_DIR", str(netplan_dir))
 
-    from app import config_store, log_store, network_state, nic_ip_change
+    from app import config_store, log_store, nic_ip_change
 
     importlib.reload(config_store)
     importlib.reload(log_store)
-    importlib.reload(network_state)
     importlib.reload(nic_ip_change)
 
     return {
@@ -37,6 +36,5 @@ def isolated_dirs(tmp_path, monkeypatch):
         "netplan_dir": netplan_dir,
         "config_store": config_store,
         "log_store": log_store,
-        "network_state": network_state,
         "nic_ip_change": nic_ip_change,
     }

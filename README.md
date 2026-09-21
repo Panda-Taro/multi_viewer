@@ -12,8 +12,9 @@ OSネットワーク設定機能）のみ**。NMOS/PTP/映像受信/配信の実
 
 - WebGUI一式（ダッシュボード／メディアストリーム設定／PTP・NMOS設定／システム設定／ログ）
 - 設定を永続化する設定ストア（JSON、後続ステップがそのまま読み書きできる構造）
-- **NIC（10G×2・1G×1）のIPアドレス変更機能（OSのnetplan設定を実際に書き換える、本番動作）**
-- 上記に必須の安全機構（変更前バックアップ／確認待ちタイムアウト／自動ロールバック）
+- **NIC（10G×2・1G×1）のIPアドレス変更機能（OSのnetplan設定を実際に書き換える、本番動作）**。
+  適用すると確認ポップアップの後すぐにサーバーを再起動する。自動ロールバックは行わない
+  （運用方針の変更について詳細は下記「IPアドレス変更の挙動」を参照）
 - ログ収集の仕組み、systemdユニット定義、初回セットアップスクリプト
 
 やらないこと（後続ステップ）:
@@ -30,15 +31,13 @@ webgui/            FastAPI製WebGUI本体
   app/
     config_store.py    設定ストア（/etc/multiviewer/config.json）
     log_store.py        イベントログ（/var/log/multiviewer/events.log）
-    network_state.py    NIC変更の確認待ち状態機械（/etc/multiviewer/network-state.json）
-    nic_ip_change.py    netplan書き換え・バックアップ・ロールバックの実装
+    nic_ip_change.py    netplan書き換え・即時再起動の実装
     nic_state.py        OSから読み取るNIC状態（読み取り専用）
     routers/            各画面・APIのFastAPIルータ
     templates/, static/ Jinja2テンプレートとCSS/JS
   tests/               pytest
 scripts/
   setup.sh                 初回セットアップスクリプト（要root）
-  nic_rollback_check.py    ロールバック安全機構のチェックスクリプト（timerから起動）
 systemd/               systemdユニット定義
 ```
 
@@ -66,68 +65,57 @@ systemd/               systemdユニット定義
 - `streaming.bitrate_mbps`（10〜50）/`streaming.url_path`（視聴用URL、デフォルト `/monitor01/`）
 - `display.mode`（"quad"|"single"）/`display.single_source`（1〜4）
 
-## IPアドレス変更の安全機構（最重要）
+## IPアドレス変更の挙動
 
-前提: 過去の実装でOSネットワーク設定変更の不備によりSSHログイン不能になる事故が発生したため、
-今回は以下の設計を必須要件として実装した。
+**注意（2026-09-21改訂）**: 当初は変更前バックアップ・確認待ちタイムアウト・自動ロールバックの
+安全機構を実装していたが、操作者からの明示的な指示により、この安全機構（確認待ち状態機械・
+自動ロールバック・関連するsystemdタイマー）は撤去した。以前の設計は本ファイルのgit履歴
+（コミット `739b636`）に残っている。
 
-### 設計
+### 現在の設計
 
-1. **ライブ変更をしない**: WebGUIから適用しても、その場で`netplan apply`は呼ばない。
-   netplanファイルを書き換えて**再起動を予約**するだけ。新しいIPは起動時に
-   systemd-networkd がnetplanを適用して初めて有効になる。動作中のSSH/WebGUIセッションを
-   その場で壊すことがない（要件7.5.2「サーバー再起動を前提とする」に対応）。
-2. **変更前バックアップ**: 適用前に、対象NICのnetplanファイル（存在しなければ「存在しなかった」
-   というマーカー）を `/etc/multiviewer/netplan-backups/<UTCタイムスタンプ>/` にコピーする。
-3. **構文検証**: 書き込み後、`netplan generate`（ライブのネットワークに触れないドライラン）で
-   検証し、失敗したら即座に元のファイルへ戻し、再起動は予約しない。
-4. **確認待ちタイムアウト**: 状態は `/etc/multiviewer/network-state.json` に記録される
-   （`stable` → `pending_confirm` → `stable`（確認時）または `rolled_back`（タイムアウト時））。
-   デフォルトのタイムアウトは**5分**（`network_state.DEFAULT_TIMEOUT_SECONDS`、画面から変更可）。
-5. **自動ロールバック**: `multiviewer-nic-rollback.timer` が20秒ごとに
-   `scripts/nic_rollback_check.py` を実行し、`pending_confirm` のままタイムアウトを超えていたら、
-   バックアップからnetplanファイルを復元し、`rolled_back` に遷移して再度再起動する。
-   このタイマーはWebGUIプロセスの生死に依存しない（WebGUI自体が制御NIC変更で
-   到達不能になった場合でも、このタイマーは独立してOS起動時に動く）。
-6. **確認操作**: 再起動後、操作者がWebGUI（新しいIPでアクセスできることを含めて確認）から
-   「この設定を確定する」を押すと `pending_confirm` → `stable` に遷移し、ロールバックは
-   発生しなくなる。バナーはどの画面でも常時表示され、残り時間を表示する。
-7. **制御用1GNIC（WebGUI/SSHアクセス）の特別扱い**: `nic_ip_change.HIGH_RISK_TARGETS`
-   に指定されており、`confirmed_risk=True` をAPIに渡さない限り変更を拒否する
+1. WebGUIの「システム設定」画面でNICのIP設定を入力し、「適用して再起動」を押すと、
+   確認ポップアップが表示される。
+2. ポップアップで続行すると、netplanファイルを書き換え、`netplan generate`（ライブの
+   ネットワークに触れないドライラン）で構文検証する。検証に失敗した場合は即座に元の
+   ファイル内容へ戻し、エラーを表示する（再起動はしない）。
+3. 検証に成功したら、**その場ですぐにサーバーを再起動する**（要件7.5.2「サーバー再起動を
+   前提とする」に対応。ただし予約や猶予時間は設けていない）。
+4. 再起動後、新しい設定はそのまま維持される。**自動的なロールバックは行わない。**
+   誤った設定を適用した場合、操作者自身が物理コンソール等から手動で復旧する必要がある。
+5. 制御用1GNIC（WebGUI/SSHアクセス）の変更は `nic_ip_change.HIGH_RISK_TARGETS` に
+   指定されており、`confirmed_risk=True` をAPIに渡さない限り変更を拒否する
    （サーバー側で強制、クライアント側のチェックボックスは補助）。画面上にも
    「メディア用10GNICより復旧が難しい」という警告を表示する。
 
+### リスクについて（重要・必読）
+
+自動ロールバックがないため、**制御用1GNICの設定を誤ると、SSH/WebGUIともに到達不能になり、
+自動的には復旧しない。** 変更前に必ず以下を行うこと。
+
+- 物理コンソール、IPMI/BMC、シリアルコンソール等、SSH以外の復旧手段を確保しておくこと
+- 入力したIPアドレス・プレフィックス・ゲートウェイに誤りがないか、適用前に必ず再確認すること
+- 可能であれば、まず復旧が容易な環境（VM等）で一連の動作（適用→再起動→アクセス確認）を
+  確認してから、本番相当の物理機で行うこと
+- 制御NIC（1GNIC）は特にリスクが高いため、最初は必ずメディア用10GNICで動作を確認してから
+  試すこと
+
 ### 動作確認の状況
 
-- **動作確認済み**（`webgui/tests/test_nic_ip_change.py`、`test_network_state.py`
-  でロジックをユニットテスト。`netplan`/`shutdown` コマンド不在の開発機でも、それらの
-  呼び出しをモックまたはスキップして検証している）:
-  - netplanファイルのバックアップ（存在時／不在時の両方）
-  - 構文検証失敗時のファイル即時ロールバック
-  - `pending_confirm` → `confirm()` → `stable` の遷移
-  - タイムアウト経過後の `perform_rollback_if_expired()` によるファイル復元・状態遷移・
-    再起動呼び出し
+- **動作確認済み**（`webgui/tests/test_nic_ip_change.py` でロジックをユニットテスト。
+  `netplan`/`reboot` コマンド不在の開発機でも、それらの呼び出しをモックまたはスキップして
+  検証している）:
+  - netplanファイルの書き込みと即時reboot呼び出し
+  - 構文検証失敗時のファイル即時ロールバック（バックアップからではなく、書き込み前の
+    内容をメモリ上に保持しておいて書き戻すだけの、同期的なもの）
   - 制御NICは `confirmed_risk=True` なしでは拒否されること
-  - WebGUI API経由（`/api/network/apply`, `/api/network/confirm`, `/api/network/state`）での
-    一連の流れ（`webgui/tests/test_app_routes.py`）
+  - WebGUI API経由（`/api/network/apply`）での一連の流れ（`webgui/tests/test_app_routes.py`）
 
 - **未検証（実機での最終検証が必要）**:
   - 実際のUbuntu Server 24.04.4上での `netplan generate`/起動時のnetplan適用の実挙動
   - 実際にNICのIPアドレスを変更し、再起動を経て新しいアドレスでアクセスできること
     （要件9.9.3）
-  - `multiviewer-nic-rollback.timer` が実際のsystemd環境で20秒間隔どおりに動作し、
-    タイムアウト後に確実にロールバック・再起動を行うこと
-  - 制御NIC変更失敗時に、本当にSSHから復旧不能になった場合でもロールバックタイマーが
-    機能し、最終的にアクセスを回復できること（物理コンソールでの確認が望ましい）
-  - `shutdown -r +1` による再起動タイミングと、WebGUIのHTTPレスポンス返却の競合状態がないこと
-
-### 検証方法について（重要・必読）
-
-**この安全機構自体の動作確認は、まず復旧が容易な環境（VM等、スナップショット/コンソール
-アクセスが容易なもの）で行うこと。** 本番相当の物理機でテストする場合は、SSH以外の復旧手段
-（物理コンソール、IPMI/BMC、シリアルコンソール等）を必ず確保した状態で行うこと。
-制御NIC（1GNIC）の変更は特にリスクが高いため、最初は必ずメディア用10GNICで一連の動作
-（適用→再起動→確認 or タイムアウトによるロールバック）を確認してから、制御NICで試すこと。
+  - `reboot` コマンドの呼び出しタイミングと、WebGUIのHTTPレスポンス返却の競合状態がないこと
 
 ## セットアップ
 
@@ -150,8 +138,8 @@ pip install -r requirements.txt pytest httpx
 pytest -q
 ```
 
-39件のユニット・APIテストで、設定ストア・ログストア・ネットワーク状態機械・
-NIC変更ロジック（バックアップ／検証／ロールバック）・WebGUIの各画面とAPIを検証している。
+30件のユニット・APIテストで、設定ストア・ログストア・NIC変更ロジック（netplan書き込み・
+構文検証失敗時の復元・即時reboot呼び出し）・WebGUIの各画面とAPIを検証している。
 UIのブラウザでの目視確認は `uvicorn app.main:app` をローカルで起動して行った
 （Windows開発機のため `ip`/`netplan`/`psutil` 等OS依存機能は自動的にNo-op/N-A表示に
 フォールバックする設計）。

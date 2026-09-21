@@ -41,8 +41,8 @@ async function applyNic(panel) {
   }
 
   const warningMessage =
-    `NIC (${payload.interface}) の設定を変更し、サーバーを再起動します。\n` +
-    `新しい設定で正常にアクセスできない場合、設定した時間以内に確定しないと自動的に元の設定へロールバックされます。\n` +
+    `NIC (${payload.interface}) の設定を変更し、すぐにサーバーを再起動します。\n` +
+    `再起動後、この設定はそのまま維持されます（自動的なロールバックはありません）。\n` +
     `続行しますか？`;
   if (!confirm(warningMessage)) {
     return;
@@ -62,9 +62,8 @@ async function applyNic(panel) {
       status.className = "save-status err";
       return;
     }
-    status.textContent = "適用しました。再起動を予約しました。";
+    status.textContent = "適用しました。再起動しています...";
     status.className = "save-status ok";
-    pollNetworkState();
   } catch (e) {
     status.textContent = "適用失敗: " + e;
     status.className = "save-status err";

@@ -128,39 +128,35 @@ def test_network_apply_requires_confirmed_risk_for_control(client):
     assert response.status_code == 400
 
 
-def test_network_apply_and_confirm_flow(client):
+def test_network_apply_writes_config_and_reboots(client):
     payload = {
         "target": "media_amber",
         "interface": "eth1",
         "mode": "static",
         "address": "192.168.20.5",
         "prefix": 24,
-        "timeout_seconds": 60,
     }
     response = client.post("/api/network/apply", json=payload)
     assert response.status_code == 200
-    assert response.json()["network_state"]["status"] == "pending_confirm"
+    assert response.json()["result"]["status"] == "rebooting"
 
-    state = client.get("/api/network/state").json()
-    assert state["status"] == "pending_confirm"
-
-    confirm_response = client.post("/api/network/confirm")
-    assert confirm_response.status_code == 200
-    assert confirm_response.json()["network_state"]["status"] == "stable"
+    status = client.get("/api/dashboard/status").json()
+    assert status["nics"]["media_amber"]["interface"] == "eth1"
 
 
-def test_network_apply_rejected_while_already_pending(client):
+def test_network_apply_can_be_called_again_immediately(client):
     payload = {
         "target": "media_amber",
         "interface": "eth1",
         "mode": "dhcp",
-        "timeout_seconds": 60,
     }
     first = client.post("/api/network/apply", json=payload)
     assert first.status_code == 200
 
+    # No pending/confirm state exists any more, so a second apply is not
+    # blocked -- the operator is trusted to know what they changed.
     second = client.post("/api/network/apply", json=payload)
-    assert second.status_code == 409
+    assert second.status_code == 200
 
 
 def test_logs_roundtrip(client):

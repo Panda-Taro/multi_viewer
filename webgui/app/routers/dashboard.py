@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from .. import config_store, log_store, network_state, nic_state, system_stats
+from .. import config_store, log_store, nic_state, system_stats
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
@@ -67,7 +67,6 @@ def dashboard_status():
         "display_mode": config["display"]["mode"],
         "single_source": config["display"]["single_source"],
         "viewer_url_path": config["streaming"]["url_path"],
-        "network_pending": network_state.load_state(),
     }
 
 

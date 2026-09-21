@@ -6,9 +6,8 @@
 <div class="panel">
   <div class="panel-title">NICアドレス設定（OSレベルのネットワーク設定）</div>
   <p class="help-text">
-    設定を適用すると、現在のnetplan設定をバックアップした上で新しい設定を書き込み、サーバーを再起動します。
-    再起動後、<strong>{{ rollback_timeout_default // 60 }}分</strong>以内にこの画面から「この設定を確定する」を
-    行わない場合、自動的に以前の設定へロールバックして再度再起動します。
+    設定を適用すると、新しいnetplan設定を書き込み、確認ポップアップの後すぐにサーバーを再起動します。
+    再起動後は新しい設定がそのまま維持されます（自動的なロールバックは行いません）。
   </p>
   <p class="help-text" style="color: var(--warn)">
     制御用1GNIC（WebGUI/SSHアクセスに使用）の変更は、メディア用10GNICより復旧が難しくなります。
@@ -17,9 +16,9 @@
 
   <div class="system-grid" id="nic-forms">
     {% for target, label, risky in [
-      ("control", "制御用1GNIC (WebGUI / SSH)", true),
       ("media_amber", "メディア用10GNIC - Amber (A系)", false),
       ("media_blue", "メディア用10GNIC - Blue (B系)", false),
+      ("control", "制御用1GNIC (WebGUI / SSH)", true),
     ] %}
     <div class="panel" data-target="{{ target }}">
       <div class="panel-title">
@@ -60,7 +59,7 @@
         <label for="risk-{{ target }}">制御NICの変更に伴うアクセス不能のリスクを理解しました</label>
       </div>
       {% endif %}
-      <button class="btn btn-small" data-role="apply">適用して再起動を予約</button>
+      <button class="btn btn-small" data-role="apply">適用して再起動</button>
       <span class="save-status" data-role="status"></span>
     </div>
     {% endfor %}

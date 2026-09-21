@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from .. import config_store, log_store, network_state, nic_ip_change, nic_state
+from .. import config_store, log_store, nic_ip_change, nic_state
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
@@ -23,18 +23,9 @@ def system_page(request: Request):
             "config": config,
             "active_page": "system",
             "physical_interfaces": nic_state.list_physical_interface_names(),
-            "network_state": network_state.load_state(),
-            "rollback_timeout_default": network_state.DEFAULT_TIMEOUT_SECONDS,
             "high_risk_targets": nic_ip_change.HIGH_RISK_TARGETS,
         },
     )
-
-
-@router.get("/api/network/state")
-def get_network_state():
-    state = network_state.load_state()
-    state["seconds_remaining"] = network_state.seconds_remaining(state)
-    return state
 
 
 class NetworkApplyRequest(BaseModel):
@@ -45,22 +36,12 @@ class NetworkApplyRequest(BaseModel):
     prefix: int = Field(default=24, ge=1, le=32)
     gateway: str = ""
     confirmed_risk: bool = False
-    timeout_seconds: int = Field(default=network_state.DEFAULT_TIMEOUT_SECONDS, ge=30, le=1800)
 
 
 @router.post("/api/network/apply")
 def apply_network(update: NetworkApplyRequest):
     if update.target not in nic_ip_change.TARGETS:
         raise HTTPException(status_code=422, detail=f"target must be one of {nic_ip_change.TARGETS}")
-
-    current_state = network_state.load_state()
-    if current_state["status"] == "pending_confirm":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "前回のネットワーク変更がまだ確認待ちです。確認またはロールバックの完了後に再度実行してください。"
-            ),
-        )
 
     request = nic_ip_change.NicChangeRequest(
         target=update.target,
@@ -70,10 +51,9 @@ def apply_network(update: NetworkApplyRequest):
         prefix=update.prefix,
         gateway=update.gateway,
         confirmed_risk=update.confirmed_risk,
-        timeout_seconds=update.timeout_seconds,
     )
     try:
-        state = nic_ip_change.apply_change(request)
+        result = nic_ip_change.apply_change(request)
     except nic_ip_change.NicChangeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -90,16 +70,7 @@ def apply_network(update: NetworkApplyRequest):
     }
     config_store.save_config(config)
 
-    return {"status": "pending_reboot", "network_state": state}
-
-
-@router.post("/api/network/confirm")
-def confirm_network():
-    state = network_state.load_state()
-    if state["status"] != "pending_confirm":
-        raise HTTPException(status_code=409, detail="確認待ちのネットワーク変更はありません")
-    new_state = nic_ip_change.confirm_change()
-    return {"status": "ok", "network_state": new_state}
+    return {"status": "ok", "result": result}
 
 
 class StreamingUpdate(BaseModel):

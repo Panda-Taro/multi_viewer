@@ -18,14 +18,9 @@
       <a class="sidenav-item sidenav-external" href="/monitor01/" target="_blank" rel="noopener">視聴画面を開く &#8599;</a>
     </nav>
     <main class="content">
-      <div id="network-pending-banner" class="banner banner-warning" hidden>
-        <span id="network-pending-text"></span>
-        <button id="network-confirm-btn" class="btn btn-small">この設定を確定する</button>
-      </div>
       {% block content %}{% endblock %}
     </main>
   </div>
-  <script src="/mgmt/static/js/common.js"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
