@@ -4,9 +4,9 @@ ST2110-20/-30 の受信・4分割合成・WebRTC配信・NMOS制御・WebGUI を
 
 要件定義書（`MultiViewer要件定義書.pdf`、ローカル保管・本リポジトリには含めない）に基づき、
 5ステップに分けて段階的に実装する。**本リポジトリの現在の内容はステップ1（WebGUIの表面と
-OSネットワーク設定機能）＋ステップ2a（NMOS IS-04/IS-05、静的登録のみ）**。
-PTP同期/映像・音声の実受信（MTL）/合成・配信（FFmpeg・MediaMTX）、およびNMOSのmDNS自動発見
-（ステップ2b）は未実装。
+OSネットワーク設定機能）＋ステップ2a（NMOS IS-04/IS-05、静的登録）＋ステップ2b第1段階
+（mDNS発見のスパイク実装のみ、登録フローへの統合は未実施）**。
+PTP同期/映像・音声の実受信（MTL）/合成・配信（FFmpeg・MediaMTX）は未実装。
 
 ## ステップ1のスコープ（完了）
 
@@ -41,9 +41,31 @@ Receiver×5（映像4＋音声1）を登録できること。**
   他機器と同じ4API構成に揃えるためだけに用意し、実体（イベントソース・チャンネル
   マッピング）は空を返す。詳細は下記「NMOS実装」章参照
 
+## ステップ2bのスコープ（今回・**第1段階のみ完了、第2/3段階は未着手**）
+
+**ゴール: `rds_discovery`="auto"のとき、mDNS＆DNS-SD（`_nmos-register._tcp`）でRDSを
+自動発見し、優先度に従って選択・登録・フェイルオーバーできること。**
+
+mDNSは環境依存の不具合が出やすいため、依頼者の指示により3段階に分けて進めている。
+
+- **第1段階（今回・完了）: 発見のみのスパイク実装**。`webgui/app/nmos/mdns_discovery.py`
+  （zeroconfライブラリを使用、`_nmos-register._tcp`をブラウズし`DiscoveredRegistry`
+  （name/addresses/port/txt/`pri`優先度/推定Registration API URL）を返す）と、それを
+  呼び出すだけのCLIスパイクスクリプト`scripts/mdns_discovery_spike.py`を用意した。
+  **登録フロー（`registration_client.py`）へはまだ一切統合していない**
+  （`rds_discovery`="auto"は引き続き「無効」表示のまま）
+- **第2段階（未着手）**: 発見したRDSからの優先度選択、`registration_client.py`への統合、
+  フェイルオーバー
+- **第3段階（未着手）**: WebGUIでの発見状態表示、`static`⇔`auto`切替の即時反映
+
+**第1段階は依頼者の指示により「実機での動作確認ができるまで第2段階に進まない」という
+一時停止ポイントに設定されている。** 実機（対象サーバー）でのスパイクスクリプト実行結果
+待ちのため、このコミットでは第1段階のみをコミットしている。詳細は下記「mDNS discovery」
+章、および実機で実行してもらう必要があるコマンドを参照。
+
 やらないこと（後続ステップ）:
 
-- NMOSのmDNS自動発見（ステップ2b）、PTPクライアント実装（ステップ3）
+- NMOSのmDNS自動発見の登録フロー統合（ステップ2b第2/3段階）、PTPクライアント実装（ステップ3）
 - MTLによるST2110-20/-30受信、ST2022-7冗長マージ、IGMP Join/Leaveの実処理（ステップ4）
 - FFmpegによる4分割合成、MediaMTXによるWebRTC配信（ステップ5）
 - 上記に対応するWebGUI画面はレイアウトのみ存在し、裏側の実処理には未接続
@@ -71,9 +93,11 @@ webgui/            FastAPI製WebGUI本体・NMOSサービス本体（同一Pytho
       channelmapping_api.py IS-08 Channel Mapping API（存在確認のみの最小スタブ）
       status_store.py      NMOS登録状態をWebGUIプロセスへ橋渡しする状態ファイル
       service.py            NMOSサービスのFastAPIアプリ（Connection API + 登録クライアント常駐）
+      mdns_discovery.py     mDNS発見（ステップ2b第1段階。登録フローへは未統合）
   tests/               pytest（mock_rds.pyは結合テスト用の自作モックRDS）
 scripts/
   setup.sh                 初回セットアップスクリプト（要root）
+  mdns_discovery_spike.py  mDNS発見スパイクスクリプト（実機で手動実行して確認する用）
 systemd/               systemdユニット定義（webgui / nmos の2サービス）
 ```
 
@@ -246,6 +270,76 @@ NMOSコントローラとの相互接続は未検証。
   - `nmos.common_port`変更後、NMOSサービスの手動再起動が実際に必要であることの運用上の
     影響（自動追従しない既知の制約）
 
+## mDNS discovery（ステップ2b・第1段階のみ）
+
+要件④-7-1-2/⑥-3-2-1-4「RDS発見方式: mDNS＆DNS-SD（サービスタイプ
+`_nmos-register._tcp`）」に対応するための最初の段階。**慎重に進めるため、依頼者の指示で
+3段階に分割しており、今回は「発見のみ」の第1段階のみを実装・コミットしている。**
+
+### なぜ慎重に進めるか: avahi-daemon / systemd-resolvedとの衝突リスク
+
+Ubuntu Server 24.04.4は、`avahi-daemon`と`systemd-resolved`のマルチキャストDNS機能の
+両方がUDP 5353番ポートを使いうる環境である。採用したPythonライブラリ`zeroconf`は自前の
+マルチキャストソケットを`SO_REUSEADDR`／（対応プラットフォームでは）`SO_REUSEPORT`付きで
+開くため、設計上は他プロセスと共存できるはずだが、**これは実機のOS設定・カーネル挙動に
+依存するため、このリポジトリの開発機（Windows）では検証できない。**
+
+本システムはRDSを**ブラウズするだけ**で、自分自身をmDNSで広報することはない
+（IS-04 Node APIはこの用途では実装済みだが、mDNSでの自己広報は行っていない）。
+広報を伴わない分、一般的なmDNS対応ノードよりは衝突リスクが低いと考えられるが、それでも
+実機での確認は必須とした。
+
+### 実機で確認・実行してほしいこと（このコミットの動作確認としてブロッキング）
+
+```bash
+# 1. mDNS関連サービスの状態確認（結果をこのREADMEまたはNOTES.mdに追記する想定）
+systemctl status avahi-daemon
+resolvectl mdns
+ss -ulnp | grep 5353
+
+# 2. リポジトリを最新化してvenvにzeroconfをインストール
+cd ~/multi_viewer
+git pull origin main
+sudo scripts/setup.sh
+
+# 3. スパイクスクリプトを実行（別途、nmos-cpp Registry等がこのLAN上でmDNS広報している状態で）
+cd /opt/multiviewer/webgui
+../venv/bin/python ../../scripts/mdns_discovery_spike.py 15
+```
+
+期待される出力: 広報中のRDSが1件以上見つかり、`name`/`addresses`/`port`/`priority(pri)`/
+`txt`/`registration_base_url`が表示されること。**この結果を報告してもらうまで、
+第2段階（発見結果を登録フローへ統合する実装）には進まない。**
+
+### 実装したもの（第1段階）
+
+- `webgui/app/nmos/mdns_discovery.py`: `zeroconf.ServiceBrowser`で
+  `_nmos-register._tcp`をブラウズし、見つかった各RDSを`DiscoveredRegistry`
+  （`name`/`addresses`/`port`/`server`/`txt`）にまとめて返す`discover_registries()`。
+  `DiscoveredRegistry.priority`はTXTレコードの`pri`（優先度。値が小さいほど高優先、
+  `pri=0`は親レジストリ予約、AMWA BCP-002-01）を整数として取り出す
+  （欠落・非数値の場合は`None`で「最低優先度」として扱う想定）。
+  `registration_base_url`はTXTの`api_ver`/`api_proto`（無ければv1.3/http）から
+  Registration APIのベースURLを組み立てる
+- `scripts/mdns_discovery_spike.py`: 上記を呼び出すだけのCLI。指定秒数（デフォルト15秒）
+  ブラウズして結果を標準出力に表示する。**登録は一切行わない**
+- **`registration_client.py`には一切変更を加えていない**（`rds_discovery`="auto"は
+  引き続き「未実装」として`status_store`に`disabled`を書き込むのみ）
+
+### 動作確認の状況
+
+- **動作確認済み（ユニットテスト、開発機）**: `DiscoveredRegistry`への変換ロジック、
+  `priority`のパース（正常値・欠落・非数値・`pri=0`の扱い）、`registration_base_url`の
+  組み立て。いずれも実際のzeroconf `ServiceInfo`オブジェクトを使い、ネットワークI/Oを
+  伴わない部分のみを検証している（`webgui/tests/test_nmos_mdns_discovery.py`）
+- **未検証（実機でのスパイクスクリプト実行が必須）**:
+  - 実際のLAN上でのmDNSパケットの到達性（スイッチのマルチキャストフィルタ・IGMP
+    スヌーピング設定等の影響を含む）
+  - avahi-daemon / systemd-resolvedが稼働中の環境で、実際に`_nmos-register._tcp`を
+    発見できるか（ポート競合が発生しないか）
+  - `discover_registries()`自体（実際のブラウズ・`ServiceBrowser`の動作）は、Windows
+    開発機では検証不能なためユニットテスト対象外としている
+
 ## IPアドレス変更の挙動
 
 **注意（2026-09-21改訂）**: 当初は変更前バックアップ・確認待ちタイムアウト・自動ロールバックの
@@ -322,9 +416,10 @@ pip install -r requirements.txt pytest httpx pytest-asyncio
 pytest -q
 ```
 
-80件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
+89件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
 WebGUIの各画面とAPI・NMOS（IS-04リソース生成/Registrationクライアント/Node API/
-IS-05 Connection API/IS-07・IS-08スタブ/自作モックRDSとの結合テスト）を検証している。
+IS-05 Connection API/IS-07・IS-08スタブ/自作モックRDSとの結合テスト/mDNS発見の
+パース・優先度・URL組み立てロジック）を検証している。
 UIのブラウザでの目視確認は `uvicorn app.main:app` をローカルで起動して行った
 （Windows開発機のため `ip`/`netplan`/`psutil` 等OS依存機能は自動的にNo-op/N-A表示に
 フォールバックする設計）。

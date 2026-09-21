@@ -216,3 +216,53 @@ Node/Device/Receiverの各必須フィールド・パターン制約を全て突
   配信が必要になった場合は、この段階のスタブを本実装に差し替える。
 - 要件定義書との関係を明確にするため、この2つのAPIが要件外であることをREADME.mdにも
   明記した。
+
+---
+
+# ステップ2b（第1段階）: mDNS発見
+
+## ライブラリ選定: `zeroconf`（python-zeroconf）を採用
+
+- 候補は主に2つ: (a) `zeroconf`（純Python実装、自前でマルチキャストソケットを開く）、
+  (b) `python-avahi` + D-Bus経由でavahi-daemonのブラウズ機能を利用する方式。
+- `zeroconf`を選んだ理由:
+  - pip一発でインストールでき、システムパッケージ（`python3-avahi`等）やD-Busへの
+    依存が無い。`webgui/requirements.txt`にそのまま追加でき、venv内で完結する
+  - avahi-daemonが動いていない環境（依頼者の指示どおり、このサーバー専用機では
+    無効化する可能性がある）でも単体で動作する。avahi D-Bus方式だとavahi-daemonの
+    存在が前提になり、無効化する選択肢と矛盾する
+  - Python向けNMOS実装（AMWA公式のリファレンス実装を含む）でも`zeroconf`が
+    実質的な標準として使われている実績がある
+- リスクとして、`zeroconf`は自前でUDP 5353にバインドするため、avahi-daemon/
+  systemd-resolvedのmDNS機能と同時に稼働させた場合にポート競合が起きないか、という
+  懸念がある。`zeroconf`は`SO_REUSEADDR`・（プラットフォームが対応していれば）
+  `SO_REUSEPORT`を付けてソケットを開く設計になっており、設計上は共存可能なはずだが、
+  **これは実際のOS・カーネル挙動に依存するため、この開発環境（Windows）では検証
+  できない。** これが「第1段階のスパイク実装を実機で確認するまで統合を進めない」という
+  依頼者の指示の核心であり、その通りに従っている。
+
+## 段階分けの徹底
+
+- 依頼の「一度に発見→登録まで作り切ろうとしない」という指示に従い、今回のコミットでは
+  `webgui/app/nmos/mdns_discovery.py`（発見・パース・優先度算出）と
+  `scripts/mdns_discovery_spike.py`（手動実行用CLI）のみを追加し、
+  **`registration_client.py`には一切手を入れていない**。`rds_discovery`="auto"は
+  従来通り「未実装（disabled）」のまま。
+- 優先度による選択（`pri`が最小のものを選ぶ）・フェイルオーバー・WebGUI表示は、
+  依頼で明示された第2段階・第3段階として意図的に実装していない。これはサボりではなく、
+  「発見自体が実機で動くかどうか分からない段階で、その上に統合ロジックを積むのは
+  手戻りリスクが高い」という依頼者の判断に従ったもの。
+
+## avahi-daemon / systemd-resolvedの無効化判断について
+
+- 依頼で「本サーバーはMultiViewer専用機であり他用途への影響を心配する必要がない」
+  ことが明示されているため、実機でのスパイクスクリプト実行結果次第では、
+  `avahi-daemon`の停止・無効化（`systemctl disable --now avahi-daemon`）や
+  `systemd-resolved`のmDNS機能の無効化（`resolvectl mdns <interface> no`、または
+  `/etc/systemd/resolved.conf`の`MulticastDNS=no`）を行う判断はこちらで自由に
+  行ってよいとされている。
+- **ただし、このコミットの時点では実機での確認結果がまだ無いため、これらの無効化操作は
+  一切行っていない。** 次回、依頼者から共有されるスパイクスクリプトの実行結果
+  （avahi-daemon/systemd-resolvedの状態、発見できたか否か）を見て、競合が実際に
+  確認された場合にのみ、どちらをどう無効化するかを判断し、その内容と理由をここに
+  追記する。
