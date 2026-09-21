@@ -20,12 +20,18 @@ STATUS_PATH = STATUS_DIR / "nmos-status.json"
 _lock = threading.Lock()
 
 _DEFAULT_STATUS = {
-    "registration_status": "disabled",  # "disabled" | "registering" | "registered" | "error"
+    # "disabled" | "discovering" | "registering" | "registered" | "error"
+    "registration_status": "disabled",
+    "discovery_mode": None,  # "static" | "auto", mirrors config.nmos.rds_discovery
     "rds_url": None,
     "last_registered_at": None,
     "last_heartbeat_at": None,
     "last_error": None,
     "updated_at": None,
+    # Populated only while discovery_mode == "auto" (stage 2b step 2/3);
+    # each entry is {"name","addresses","port","priority","base_url"}.
+    "discovered_registries": [],
+    "selected_registry": None,
 }
 
 

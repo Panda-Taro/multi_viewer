@@ -171,3 +171,187 @@ async def test_run_forever_registers_and_heartbeats_then_stops(isolated_dirs):
 
     status = status_store.read_status()
     assert status["registration_status"] == "registered"
+
+
+def _fake_registry(name, host, port, pri, module):
+    return module.mdns_discovery.DiscoveredRegistry(
+        name=name,
+        addresses=[host],
+        port=port,
+        server=f"{name}.local.",
+        txt={"pri": str(pri), "api_ver": "v1.3", "api_proto": "http"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_forever_auto_mode_registers_with_discovered_registry(isolated_dirs):
+    from app import config_store
+    from app.nmos import registration_client, status_store
+
+    config = config_store.load_config()
+    config["nmos"]["rds_discovery"] = "auto"
+    config_store.save_config(config)
+
+    registry = _fake_registry("rds-a", "10.0.0.1", 8010, pri=100, module=registration_client)
+
+    def discover_fn(timeout_seconds):
+        return [registry]
+
+    call_log: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/resource" in request.url.path:
+            call_log.append(str(request.url))
+            return httpx.Response(200, json={})
+        return httpx.Response(200, json={})
+
+    def client_factory(**kwargs):
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs)
+
+    sleep_calls = {"count": 0}
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls["count"] += 1
+        if sleep_calls["count"] >= 2:
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await registration_client.run_forever(
+            client_factory=client_factory, sleep=fake_sleep, discover_fn=discover_fn
+        )
+
+    assert len(call_log) == 7
+    assert all("10.0.0.1:8010" in url for url in call_log)
+
+    status = status_store.read_status()
+    assert status["discovery_mode"] == "auto"
+    assert status["selected_registry"]["name"] == "rds-a"
+    assert status["discovered_registries"] == [
+        {"name": "rds-a", "addresses": ["10.0.0.1"], "port": 8010, "priority": 100,
+         "base_url": "http://10.0.0.1:8010/x-nmos/registration/v1.3/"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_forever_auto_mode_picks_highest_priority(isolated_dirs):
+    from app import config_store
+    from app.nmos import registration_client, status_store
+
+    config = config_store.load_config()
+    config["nmos"]["rds_discovery"] = "auto"
+    config_store.save_config(config)
+
+    low_priority = _fake_registry("low-pri", "10.0.0.2", 8020, pri=200, module=registration_client)
+    high_priority = _fake_registry("high-pri", "10.0.0.1", 8010, pri=10, module=registration_client)
+
+    def discover_fn(timeout_seconds):
+        return [low_priority, high_priority]
+
+    registered_hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/resource" in request.url.path:
+            registered_hosts.append(request.url.host)
+        return httpx.Response(200, json={})
+
+    def client_factory(**kwargs):
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs)
+
+    async def fake_sleep(seconds: float) -> None:
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await registration_client.run_forever(
+            client_factory=client_factory, sleep=fake_sleep, discover_fn=discover_fn
+        )
+
+    assert set(registered_hosts) == {"10.0.0.1"}  # the pri=10 registry, not pri=200
+
+    status = status_store.read_status()
+    assert status["selected_registry"]["name"] == "high-pri"
+
+
+@pytest.mark.asyncio
+async def test_run_forever_auto_mode_no_registries_reports_error_and_retries(isolated_dirs):
+    from app import config_store
+    from app.nmos import registration_client, status_store
+
+    config = config_store.load_config()
+    config["nmos"]["rds_discovery"] = "auto"
+    config_store.save_config(config)
+
+    def discover_fn(timeout_seconds):
+        return []
+
+    sleep_calls = {"count": 0}
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls["count"] += 1
+        if sleep_calls["count"] >= 2:
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await registration_client.run_forever(sleep=fake_sleep, discover_fn=discover_fn)
+
+    status = status_store.read_status()
+    assert status["registration_status"] == "error"
+    assert "見つかりませんでした" in status["last_error"]
+    assert status["discovered_registries"] == []
+    assert status["selected_registry"] is None
+    assert sleep_calls["count"] >= 2  # it kept retrying rather than crashing
+
+
+@pytest.mark.asyncio
+async def test_run_forever_auto_mode_fails_over_to_next_registry_after_heartbeat_failure(isolated_dirs):
+    from app import config_store
+    from app.nmos import registration_client, status_store
+
+    config = config_store.load_config()
+    config["nmos"]["rds_discovery"] = "auto"
+    config_store.save_config(config)
+
+    # primary has the better (lower) priority; secondary should only be
+    # used once primary starts failing heartbeats.
+    primary = _fake_registry("primary", "10.0.0.1", 8010, pri=10, module=registration_client)
+    secondary = _fake_registry("secondary", "10.0.0.2", 8020, pri=50, module=registration_client)
+
+    def discover_fn(timeout_seconds):
+        return [primary, secondary]
+
+    registered_hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/resource" in request.url.path:
+            registered_hosts.append(request.url.host)
+            return httpx.Response(200, json={})
+        if "/health/" in request.url.path:
+            if request.url.host == "10.0.0.1":
+                return httpx.Response(404)  # primary has stopped recognising us
+            return httpx.Response(200, json={})
+        return httpx.Response(200, json={})
+
+    def client_factory(**kwargs):
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs)
+
+    sleep_calls = {"count": 0}
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls["count"] += 1
+        # 1st sleep: inside the primary's heartbeat loop (triggers the
+        # 404 above). 2nd sleep: inside the secondary's heartbeat loop,
+        # after failover -- stop there.
+        if sleep_calls["count"] >= 3:
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await registration_client.run_forever(
+            client_factory=client_factory, sleep=fake_sleep, discover_fn=discover_fn
+        )
+
+    # Registered with the primary first, then -- after its heartbeat 404'd
+    # -- re-registered with the secondary instead of the primary again.
+    assert registered_hosts[:7] == ["10.0.0.1"] * 7
+    assert registered_hosts[7:14] == ["10.0.0.2"] * 7
+
+    status = status_store.read_status()
+    assert status["selected_registry"]["name"] == "secondary"

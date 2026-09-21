@@ -107,6 +107,21 @@ def test_update_ptp(client):
     assert response.json()["ptp"]["domain"] == 5
 
 
+def test_ptp_nmos_page_renders(client):
+    response = client.get("/mgmt/ptp-nmos")
+    assert response.status_code == 200
+    assert "NMOS登録・発見状態" in response.text
+
+
+def test_nmos_status_endpoint_returns_defaults(client):
+    response = client.get("/api/nmos/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["registration_status"] == "disabled"
+    assert body["discovered_registries"] == []
+    assert body["selected_registry"] is None
+
+
 def test_display_mode_update(client):
     response = client.post("/api/display", json={"mode": "single", "single_source": 3})
     assert response.status_code == 200

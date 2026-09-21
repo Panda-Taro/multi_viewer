@@ -21,15 +21,17 @@ async function refreshDashboard() {
   document.getElementById("nic-blue").textContent = nicText(data.nics.media_blue);
 
   const nmosLabels = {
-    disabled: "無効（未設定 または mDNS自動発見は未実装）",
+    disabled: "無効（未設定）",
+    discovering: "mDNS発見中...",
     registering: "登録中...",
     registered: "登録済み",
     error: "エラー",
   };
   const nmos = data.nmos || {};
   const nmosText = nmosLabels[nmos.registration_status] || nmos.registration_status || "不明";
+  const modeLabel = nmos.discovery_mode ? `[${nmos.discovery_mode}] ` : "";
   document.getElementById("nmos-status").textContent =
-    nmos.rds_url ? `${nmosText} (${nmos.rds_url})` : nmosText;
+    nmos.rds_url ? `${modeLabel}${nmosText} (${nmos.rds_url})` : `${modeLabel}${nmosText}`;
 
   const videoRows = document.getElementById("video-led-rows");
   videoRows.innerHTML = "";

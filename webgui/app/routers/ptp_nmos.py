@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from .. import config_store, log_store
+from ..nmos import status_store as nmos_status_store
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
@@ -88,3 +89,11 @@ def update_nmos(update: NmosUpdate):
         raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
     log_store.log_event("webgui", "info", "NMOS設定を更新しました")
     return {"status": "ok", "nmos": config["nmos"]}
+
+
+@router.get("/api/nmos/status")
+def get_nmos_status():
+    """Polled by ptp_nmos.js (stage 2b step 3): registration status plus,
+    when discovery_mode == "auto", the mDNS-discovered registries and
+    which one is currently selected/registered with."""
+    return nmos_status_store.read_status()

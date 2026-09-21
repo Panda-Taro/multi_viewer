@@ -98,9 +98,64 @@ async function saveNmos() {
   }
 }
 
+const NMOS_STATUS_LABELS = {
+  disabled: "無効（未設定）",
+  discovering: "mDNS発見中...",
+  registering: "登録中...",
+  registered: "登録済み",
+  error: "エラー",
+};
+
+function formatTimestamp(iso) {
+  return iso ? new Date(iso).toLocaleString() : "-";
+}
+
+async function refreshNmosStatus() {
+  let status;
+  try {
+    const res = await fetch("/api/nmos/status");
+    if (!res.ok) return;
+    status = await res.json();
+  } catch (e) {
+    return; // best-effort polling; a failed poll should not disrupt the page
+  }
+
+  document.getElementById("nmos-registration-status").textContent =
+    NMOS_STATUS_LABELS[status.registration_status] || status.registration_status || "-";
+  document.getElementById("nmos-discovery-mode").textContent = status.discovery_mode || "-";
+  document.getElementById("nmos-rds-url").textContent = status.rds_url || "-";
+  document.getElementById("nmos-last-heartbeat").textContent = formatTimestamp(status.last_heartbeat_at);
+  document.getElementById("nmos-last-error").textContent = status.last_error || "-";
+
+  const section = document.getElementById("nmos-discovered-section");
+  const rows = document.getElementById("nmos-discovered-rows");
+  if (status.discovery_mode !== "auto") {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  rows.innerHTML = "";
+  const selectedName = status.selected_registry ? status.selected_registry.name : null;
+  (status.discovered_registries || []).forEach((r) => {
+    const tr = document.createElement("tr");
+    const isSelected = r.name === selectedName;
+    const addr = (r.addresses || []).join(", ") + ":" + r.port;
+    tr.innerHTML =
+      `<td>${isSelected ? '<span class="led on"></span>選択中' : ""}</td>` +
+      `<td>${r.name}</td><td>${addr}</td><td>${r.priority === null ? "(未設定)" : r.priority}</td>`;
+    rows.appendChild(tr);
+  });
+  if ((status.discovered_registries || []).length === 0) {
+    rows.innerHTML = '<tr><td colspan="4">発見できたRDSはありません</td></tr>';
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   ptpSnapshot = snapshotFields(PTP_FIELDS);
   nmosSnapshot = snapshotFields(NMOS_FIELDS);
   document.getElementById("ptp-save").addEventListener("click", savePtp);
   document.getElementById("nmos-save").addEventListener("click", saveNmos);
+
+  refreshNmosStatus();
+  setInterval(refreshNmosStatus, 5000);
 });

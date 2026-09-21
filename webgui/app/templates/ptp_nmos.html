@@ -3,7 +3,8 @@
 {% block content %}
 <h1>PTP・NMOS設定</h1>
 <p class="help-text">
-  ここでの設定は設定ストアに保存されるのみで、実際のPTPクライアント動作・NMOS登録は後続ステップで実装されます。
+  PTP設定は設定ストアに保存されるのみで、実際のPTPクライアント動作は後続ステップで実装されます。
+  NMOS設定はNMOSサービス（別プロセス）が実際に読み込み、RDSへの登録・mDNS発見に使用します。
 </p>
 
 <div class="system-grid">
@@ -60,6 +61,26 @@
     </div>
     <button class="btn btn-small" id="nmos-save">保存</button>
     <span class="save-status" id="nmos-status"></span>
+  </div>
+</div>
+
+<div class="panel" id="nmos-discovery-panel">
+  <div class="panel-title">NMOS登録・発見状態</div>
+  <table class="status-table">
+    <tr><td>登録状態</td><td id="nmos-registration-status">-</td></tr>
+    <tr><td>発見方式</td><td id="nmos-discovery-mode">-</td></tr>
+    <tr><td>登録先RDS</td><td id="nmos-rds-url">-</td></tr>
+    <tr><td>最終ハートビート</td><td id="nmos-last-heartbeat">-</td></tr>
+    <tr><td>直近のエラー</td><td id="nmos-last-error">-</td></tr>
+  </table>
+
+  <div id="nmos-discovered-section" hidden>
+    <div class="panel-title" style="margin-top:1rem">mDNSで発見したRDS一覧</div>
+    <table class="status-table">
+      <tr><th>選択中</th><th>名前</th><th>アドレス</th><th>優先度(pri)</th></tr>
+      <tbody id="nmos-discovered-rows"></tbody>
+    </table>
+    <p class="help-text">優先度は値が小さいほど高優先（AMWA BCP-002-01）。選択中のRDSに登録・ハートビートを行います。</p>
   </div>
 </div>
 {% endblock %}
