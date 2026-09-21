@@ -58,15 +58,19 @@ def _media_interfaces(config: dict) -> list[dict[str, Any]]:
         nic_cfg = config["network"][target]
         live = interfaces.get(nic_cfg.get("interface"))
         mac = live["mac"] if live and live.get("mac") else "00:00:00:00:00:00"
+        # IS-04's node_interface schema requires DASH-separated lowercase
+        # hex for port_id: `^([0-9a-f]{2}-){5}[0-9a-f]{2}$`, with no
+        # freeform fallback (chassis_id does allow a freeform string, but
+        # port_id does not -- confirmed against the official AMWA IS-04
+        # v1.3 schema after a real registry rejected a colon-separated
+        # value with 400 Bad Request). A prior revision of this code used
+        # colons, which was wrong; do not "fix" this back to colons.
+        mac_dashes = mac.lower().replace(":", "-")
         result.append(
             {
                 "name": name,
-                # IS-04's node_interface schema requires colon-separated
-                # lowercase hex here (regex `^([0-9a-f]{2}:){5}[0-9a-f]{2}$`)
-                # -- an earlier revision used dashes and was rejected by a
-                # real registry with 400 Bad Request.
-                "chassis_id": mac.lower(),
-                "port_id": mac.lower(),
+                "chassis_id": mac_dashes,
+                "port_id": mac_dashes,
             }
         )
     return result

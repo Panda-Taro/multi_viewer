@@ -15,9 +15,14 @@ def test_build_node_has_required_fields(isolated_dirs):
 
 
 def test_node_interfaces_chassis_and_port_id_match_is04_mac_pattern(isolated_dirs):
-    """IS-04's node_interface schema requires colon-separated lowercase
-    hex (`^([0-9a-f]{2}:){5}[0-9a-f]{2}$`); a dash-separated value here
-    caused a real registry to reject registration with 400 Bad Request."""
+    """IS-04's node_interface schema requires DASH-separated lowercase hex
+    for port_id (`^([0-9a-f]{2}-){5}[0-9a-f]{2}$`), with no freeform
+    fallback -- confirmed against the official AMWA IS-04 v1.3 schema
+    after a real nmos-cpp registry rejected a colon-separated value with
+    400 Bad Request ("schema validation failed... no subschema has
+    succeeded"). chassis_id accepts a freeform string too, but using the
+    same dash format for both is simplest and matches the MAC-address
+    example in the spec."""
     import re
 
     from app import config_store
@@ -28,7 +33,7 @@ def test_node_interfaces_chassis_and_port_id_match_is04_mac_pattern(isolated_dir
     identity = identity_module.ensure_identity(config)["identity"]
 
     node = resources.build_node(config, identity)
-    pattern = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
+    pattern = re.compile(r"^([0-9a-f]{2}-){5}[0-9a-f]{2}$")
     for interface in node["interfaces"]:
         assert pattern.match(interface["chassis_id"]), interface["chassis_id"]
         assert pattern.match(interface["port_id"]), interface["port_id"]

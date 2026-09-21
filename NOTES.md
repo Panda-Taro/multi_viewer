@@ -148,21 +148,46 @@
 モックRDSでの結合テストは通るが、公式のJSON Schema検証をしていない」という上記の
 既知の制約（README.md「未検証」）が実際に顕在化したもので、以下2点を修正した。
 
-- **Node interfaceの`chassis_id`/`port_id`のフォーマット誤り**: IS-04の
-  `node_interface`スキーマはこの2フィールドを`^([0-9a-f]{2}:){5}[0-9a-f]{2}$`
-  （コロン区切り小文字16進数、MACアドレス形式）で要求するが、実装ではダッシュ区切り
-  （`00-11-22-33-44-55`）にしていたため正規表現に一致せずスキーマ検証エラーとなって
-  いたと考えられる。コロン区切りに修正（`webgui/app/nmos/resources.py`）。
+- **Node interfaceの`chassis_id`/`port_id`のフォーマット誤り（当初の誤った推測）**:
+  最初はコロン区切り（`00:11:22:...`）が正しいと推測して修正したが、これは**誤りだった**。
 - **Node clockの`ref_type: "ptp"`宣言が不完全**: IS-04の`clock_ptp`スキーマは
   `ref_type: "ptp"`を指定する場合、`traceable`/`version`/`gmid`/`locked`の
   追加フィールドを要求するが、PTPクライアント未実装（ステップ3）のためこれらの値を
   持っておらず、`ref_type`のみを送っていたためスキーマ検証エラーになっていたと考えられる。
-  `ref_type: "internal"`（実態に即した値）に変更し、ステップ3でPTP実装後に正しい値を
-  持たせられるようにする。
+  `ref_type: "internal"`（実態に即した値）に変更した。これは正しい修正だった
+  （`clock_internal.json`で`name`パターン`^clk[0-9]+$`・`ref_type`は`"internal"`固定と確認済み）。
 - 併せて、Registration APIクライアントのエラーログにRDSからのレスポンスボディ
   （schema検証エラーの詳細を含む）を出力するよう改善した（従来はHTTPステータスコード
-  のみで、実際の検証エラー内容が分からなかった）。
-- **注意**: 上記2点の修正でこの特定の400エラーは解消される可能性が高いが、実際にこの
-  RDS（172.17.201.192:3210）に対して再登録が成功したことは、この場では確認できていない
-  （ローカルPC側からは実機にアクセスできないため）。次回のログ確認、またはRDSから返る
-  レスポンスボディの内容で、他のスキーマ不備が残っていないか再確認が必要。
+  のみで、実際の検証エラー内容が分からなかった）。この改善により、実機での再テストで
+  nmos-cppからの実際の検証エラーメッセージ（`"schema validation failed at root -
+  no subschema has succeeded..."`）が見えるようになり、下記の再修正につながった。
+
+## 追記2: chassis_id/port_idの修正が誤りだったことが判明・再修正（2026-09-22）
+
+上記の修正をデプロイしても実機RDS（172.17.201.192:3210、nmos-cpp）への登録が
+`400 Bad Request`のまま解消しなかった。ログに出力されるようになったRDSの検証エラー
+メッセージ自体は`"no subschema has succeeded"`という汎用的なもので原因を特定できな
+かったため、AMWA公式のIS-04 v1.3 JSON Schema（`node.json`等）をGitHubから直接取得して
+照合した。
+
+結果、**`chassis_id`/`port_id`は実際にはダッシュ区切り
+（`^([0-9a-f]{2}-){5}[0-9a-f]{2}$`）が正しい形式であり、当初の実装（ダッシュ区切り）が
+正しく、最初の修正（コロン区切りへの変更）が誤りだったことが判明した**。特に`port_id`
+は`chassis_id`と異なり自由形式文字列へのフォールバック（`anyOf`でのフリーフォーム
+許容）が無く、厳密にこのMACアドレス形式のみを受け付けるため、コロン区切りは確実に
+スキーマ検証エラーになる。ダッシュ区切りに戻した（再修正）。
+
+**教訓**: 実装時に一次情報（AMWA公式スキーマ）を確認せず記憶・推測でスキーマ形式を
+決め打ちしたことが、誤った修正を生んだ直接の原因。この再修正時は
+`https://raw.githubusercontent.com/AMWA-TV/nmos-discovery-registration/v1.3.x/
+APIs/schemas/node.json`ほか`resource_core.json`/`device.json`/`receiver.json`/
+`receiver_video.json`/`receiver_core.json`/`clock_internal.json`を実際に取得し、
+Node/Device/Receiverの各必須フィールド・パターン制約を全て突き合わせて確認した上で
+修正している。
+
+- **確認事項（実機未検証）**: この再修正により実機RDSへの登録が成功するはずだが、
+  ローカル開発機から実機（172.17.201.192）に直接アクセスできないため、この場では
+  未確認。次回のデプロイ後、`/etc/multiviewer/nmos-status.json`の
+  `registration_status`が`"registered"`になること、またはWebGUIダッシュボードの
+  「NMOS登録状態」表示、あるいはRDS（nmos-cpp）側のQuery APIで本システムのNode・
+  Device・Receiver×5が実際に見えることの確認が必要。
