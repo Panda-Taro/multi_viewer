@@ -109,6 +109,7 @@ def test_patch_staged_with_activate_immediate_applies_to_config(nmos_client):
     assert receiver["amber"]["port"] == 5004
     assert receiver["blue"]["source_ip"] == "192.168.20.1"
     assert receiver["sdp_source"] == "nmos"
+    assert receiver["video_format"] == "sdp"
 
     active = nmos_client.get(
         f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/active/"
@@ -143,6 +144,54 @@ def test_patch_staged_with_transport_file_parses_sdp_and_activates(nmos_client):
     assert receiver["amber"]["source_ip"] == "192.168.10.9"
     assert receiver["payload_id"] == 96
     assert receiver["nmos_sdp"] == sdp_text
+    assert receiver["video_format"] == "sdp"
+
+
+def test_nmos_activate_forces_sdp_display_even_if_previously_fixed_manually(nmos_client):
+    """The operator's expected behaviour: once NMOS is driving a receiver,
+    its format field must show "SDP" in the WebGUI regardless of whatever
+    fixed value (e.g. "59.94i") was manually set before NMOS took over."""
+    config = nmos_client.config_store.load_config()
+    config["receivers"]["video"][0]["video_format"] = "59.94p"
+    nmos_client.config_store.save_config(config)
+
+    patch = {
+        "master_enable": True,
+        "transport_params": [
+            {"source_ip": "192.168.10.1", "multicast_ip": "239.1.1.1", "destination_port": 5004},
+            {"source_ip": "192.168.20.1", "multicast_ip": "239.1.2.1", "destination_port": 5004},
+        ],
+        "activation": {"mode": "activate_immediate"},
+    }
+    nmos_client.patch(
+        f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/staged/", json=patch
+    )
+
+    receiver = nmos_client.config_store.load_config()["receivers"]["video"][0]
+    assert receiver["video_format"] == "sdp"
+
+
+def test_nmos_activate_forces_sdp_display_for_audio_even_if_previously_fixed(nmos_client):
+    config = nmos_client.config_store.load_config()
+    config["receivers"]["audio"][0]["sampling"] = "48kHz"
+    config["receivers"]["audio"][0]["packet_time"] = "0.125ms"
+    nmos_client.config_store.save_config(config)
+
+    patch = {
+        "master_enable": True,
+        "transport_params": [
+            {"source_ip": "10.0.0.1", "multicast_ip": "239.9.9.9", "destination_port": 6000},
+            {"source_ip": "10.0.1.1", "multicast_ip": "239.9.9.10", "destination_port": 6000},
+        ],
+        "activation": {"mode": "activate_immediate"},
+    }
+    nmos_client.patch(
+        f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.audio_id}/staged/", json=patch
+    )
+
+    receiver = nmos_client.config_store.load_config()["receivers"]["audio"][0]
+    assert receiver["sampling"] == "sdp"
+    assert receiver["packet_time"] == "sdp"
 
 
 def test_scheduled_activation_mode_is_rejected(nmos_client):

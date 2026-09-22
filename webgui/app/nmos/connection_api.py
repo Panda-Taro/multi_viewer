@@ -321,6 +321,19 @@ def _activate(kind: str, index: int, receiver_id: str, staged: dict) -> None:
     receiver_cfg["sdp_source"] = "nmos"
     receiver_cfg["nmos_sdp"] = sdp_text
 
+    # Once NMOS is driving a receiver, its format fields must show "SDP"
+    # in the WebGUI, not whatever fixed value was last set manually --
+    # confirmed as the expected behaviour: format display follows
+    # sdp_source ("nmos" -> "sdp", "manual" -> whatever the operator last
+    # saved). Without this, a receiver that had e.g. video_format fixed to
+    # "59.94i" before NMOS took over kept showing "59.94i" forever, even
+    # though NMOS -- not that fixed value -- was now actually driving it.
+    if kind == "video":
+        receiver_cfg["video_format"] = "sdp"
+    else:
+        receiver_cfg["sampling"] = "sdp"
+        receiver_cfg["packet_time"] = "sdp"
+
     config_store.save_config(config)
     log_store.log_event(
         "nmos",

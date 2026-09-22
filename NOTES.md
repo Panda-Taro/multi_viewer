@@ -435,3 +435,68 @@ URLパスを混同していたことが根本原因（ボディの文字列は�
 `307`を経由せず直接`200`を返すことを、新規回帰テスト
 （`test_nmos_connection_api.py::TestNoTrailingSlashUrls`、
 `test_nmos_node_api.py`・`test_nmos_stub_apis.py`の追加ケース）で確認した。
+
+---
+
+# ステップ2f: NMOS activate時にフォーマット表示が「SDP」にならない不具合の修正
+
+## 確認手順（コード修正前に依頼された調査）
+
+依頼「NMOSコントローラーから制御した場合、映像・音声のフォーマット表示は
+GUI上で「SDP」になるべきでは」という質問に対し、コード修正を行わず現状を
+まず調査した。`connection_api.py`の`_activate()`を読んだ結果、
+`enabled`・`amber`/`blue`エンドポイント・`payload_id`（SDPに含まれていれば）・
+`sdp_source`・`nmos_sdp`は更新するが、**`video_format`（映像）・
+`sampling`/`packet_time`（音声）はどこにも更新していない**ことを確認した。
+
+実際に（コード変更なしで）`TestClient`から本物のPATCH（`transport_file`に
+実SDPを含む）を送って検証: activate前後で`video_format`は`59.94i`のまま
+変化せず、音声側も手動で`48kHz`等に固定していた場合その値が残り続けることを
+再現した。`config_store.py`の`video_format`フィールドには当初から
+`# "sdp" | "59.94i" | "59.94p" -- when "sdp", the value from NMOS SDP is used`
+というコメントがあり、この値自体を`"sdp"`にする設計意図がステップ2a実装時に
+未実装のまま抜け落ちていたことが根本原因と判断した。
+
+## 期待値の確認
+
+上記調査結果を報告した上で、依頼者に期待値を確認した:
+1. 外部NMOSコントローラーから制御された場合、映像・音声とも表示が「SDP」になり、
+   ペイロードIDはSDPから取得した数値が即時反映される
+2. 本システムで手動変更した場合は、「保存」ボタンを押した時点でのみバックエンドが
+   更新され、WebGUIもその値になる。保存を押さない限りバックエンドは変化しない
+
+2は既存の実装（`media.py`のPUTエンドポイントは明示的な呼び出し時のみ動作し、
+`sdp_source`を無条件に`"manual"`にする）で既に満たされていたため変更不要。
+1のみ修正が必要と判断し、期待値の確認が取れたことを受けて実装した。
+
+## 修正
+
+`connection_api.py`の`_activate()`の末尾で、`sdp_source`を`"nmos"`に設定する
+のと同じタイミングで、映像Receiverなら`video_format`を、音声Receiverなら
+`sampling`・`packet_time`を無条件で`"sdp"`にセットするよう追加した。
+
+- **`sdp_source`と同じトリガーに紐付けた**理由: 依頼の2つの期待値
+  （NMOS制御時は問答無用でSDP表示、手動保存時のみ手動値が反映される）を素直に
+  読むと、「フォーマット表示が"SDP"かどうか」は実質的に「`sdp_source`が
+  `"nmos"`かどうか」と同じ意味であるべきと判断した。activateがSDPファイル
+  （`transport_file`）経由か直接の`transport_params`指定かは区別せず、
+  いずれの場合もactivateが起きた時点で`"sdp"`にする（`transport_params`のみの
+  activateでも、そのReceiverは「もはや手動固定値ではなくNMOSが指定した値で
+  動いている」ことに変わりはないため）
+- ペイロードIDについては、既存の実装（SDPから`payload_type`が取得できた場合のみ
+  上書き）で既に要件を満たしていたため変更していない
+
+## 検証
+
+修正前の状態を一時的に再現（該当コードを一時的にコメントアウト）した上で
+新規回帰テストを実行し、5件が実際に失敗することを確認してから修正を復元した。
+追加したテスト:
+- `test_nmos_activate_forces_sdp_display_even_if_previously_fixed_manually`
+  （映像、事前に`59.94p`固定していてもactivate後は`"sdp"`になる）
+- `test_nmos_activate_forces_sdp_display_for_audio_even_if_previously_fixed`
+  （音声、事前に`48kHz`/`0.125ms`固定していても`"sdp"`になる）
+- `test_nmos_then_manual_save_round_trip_video`（NMOS activate→SDP表示→
+  手動保存→手動値に戻り`sdp_source`も`"manual"`に戻ることをエンドツーエンドで確認）
+- 既存の`test_patch_staged_with_activate_immediate_applies_to_config`・
+  `test_patch_staged_with_transport_file_parses_sdp_and_activates`にも
+  `video_format == "sdp"`のアサーションを追加

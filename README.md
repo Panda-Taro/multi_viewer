@@ -5,8 +5,8 @@ ST2110-20/-30 の受信・4分割合成・WebRTC配信・NMOS制御・WebGUI を
 要件定義書（`MultiViewer要件定義書.pdf`、ローカル保管・本リポジトリには含めない）に基づき、
 5ステップに分けて段階的に実装する。**本リポジトリの現在の内容はステップ1（WebGUIの表面と
 OSネットワーク設定機能）＋ステップ2a（NMOS IS-04/IS-05、静的登録）＋ステップ2b（NMOSの
-mDNS＆DNS-SD自動発見、静的登録との切替）＋ステップ2d（staged/config.json不整合バグの
-修正）**。
+mDNS＆DNS-SD自動発見、静的登録との切替）＋ステップ2d〜2f（NMOS関連の不具合修正3件:
+staged/config.json不整合、URL末尾スラッシュ不一致、activate時のフォーマット表示）**。
 PTP同期/映像・音声の実受信（MTL）/合成・配信（FFmpeg・MediaMTX）は未実装。
 
 ## ステップ1のスコープ（完了）
@@ -82,6 +82,26 @@ Receiverごとにインメモリキャッシュされるが、WebGUIからの手
 `connection_api.invalidate_staged_for()`を呼ぶようにした。次回のGET/PATCH/activate
 は必ず最新のconfig.jsonから再初期化される。「config.jsonの`enabled`・エンドポイント
 値が常にsource of truthである」という不変条件を回復した（判断根拠はNOTES.md）。
+
+## ステップ2eのスコープ（今回・完了）: IS-05の末尾スラッシュ不一致による307失敗の修正
+
+実機の別NMOSコントローラからIS-05のactivate（Join指示）を出すと`PATCH .../staged`が
+`307 Temporary Redirect`で失敗する不具合を修正。AMWA公式IS-05 RAMLを確認したところ
+`staged`/`active`/`constraints`/`transporttype`等の末端リソースの正規URLには末尾
+スラッシュが付かないが、本システムは全ルートに付けて登録していたため、規格通り
+末尾スラッシュ無しでアクセスしてきたコントローラが307に阻まれていた（PATCHは307に
+追従されないことが多い）。対象ルートを末尾スラッシュあり・なし両方で登録するよう
+修正した（詳細はNOTES.md）。
+
+## ステップ2fのスコープ（今回・完了）: NMOS activate時のフォーマット表示（SDP）修正
+
+NMOSコントローラがReceiverをactivateしても、WebGUIの映像`video_format`・音声
+`sampling`/`packet_time`が「SDP」表示にならず、以前手動固定した値が残り続ける
+不具合を修正。`connection_api.py`の`_activate()`で、`sdp_source`を`"nmos"`に
+する処理と同じタイミングで、映像は`video_format`を、音声は`sampling`/
+`packet_time`を無条件で`"sdp"`にするよう変更した。ペイロードID（SDPから取得できた
+場合のみ即時反映）と、手動保存（「保存」ボタンを押した時のみバックエンド更新）の
+挙動は既存実装で要件を満たしていたため変更していない（詳細はNOTES.md）。
 
 やらないこと（後続ステップ）:
 
@@ -498,12 +518,12 @@ pip install -r requirements.txt pytest httpx pytest-asyncio
 pytest -q
 ```
 
-118件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
+121件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
 WebGUIの各画面とAPI・NMOS（IS-04リソース生成/Registrationクライアント/Node API/
 IS-05 Connection API/IS-07・IS-08スタブ/自作モックRDSとの結合テスト/mDNS発見の
 パース・優先度選択・フェイルオーバー・`auto`モード統合ロジック/`staged`キャッシュ
-無効化の回帰テスト/末尾スラッシュ有無どちらでも直接応答することの回帰テスト）を
-検証している。
+無効化の回帰テスト/末尾スラッシュ有無どちらでも直接応答することの回帰テスト/
+NMOS activate時にフォーマット表示が「SDP」になる回帰テスト）を検証している。
 UIのブラウザでの目視確認は `uvicorn app.main:app` をローカルで起動して行った
 （Windows開発機のため `ip`/`netplan`/`psutil` 等OS依存機能は自動的にNo-op/N-A表示に
 フォールバックする設計）。

@@ -159,3 +159,25 @@ def test_invalidate_staged_for_unknown_index_is_a_noop(isolated_dirs):
     from app.nmos import connection_api
 
     connection_api.invalidate_staged_for("video", 99)  # must not raise
+
+
+def test_nmos_then_manual_save_round_trip_video(combined_client):
+    """Operator-confirmed expected behaviour, end to end:
+    1. NMOS activates -> WebGUI shows "SDP" (video_format == "sdp").
+    2. Operator manually fixes the format and presses Save (PUT) ->
+       backend updates to that exact value and sdp_source flips back to
+       "manual". Nothing changes in config.json before that PUT fires."""
+    video_path = f"/x-nmos/connection/v1.1/single/receivers/{combined_client.video_id}/staged/"
+
+    combined_client.patch(video_path, json=_activate_patch(True))
+    receiver = combined_client.config_store.load_config()["receivers"]["video"][0]
+    assert receiver["video_format"] == "sdp"
+    assert receiver["sdp_source"] == "nmos"
+
+    manual_payload = _manual_video_payload(True)
+    manual_payload["video_format"] = "59.94p"
+    combined_client.put("/api/media/video/1", json=manual_payload)
+
+    receiver = combined_client.config_store.load_config()["receivers"]["video"][0]
+    assert receiver["video_format"] == "59.94p"
+    assert receiver["sdp_source"] == "manual"
