@@ -109,7 +109,10 @@ def test_patch_staged_with_activate_immediate_applies_to_config(nmos_client):
     assert receiver["amber"]["port"] == 5004
     assert receiver["blue"]["source_ip"] == "192.168.20.1"
     assert receiver["sdp_source"] == "nmos"
-    assert receiver["video_format"] == "sdp"
+    # No transport_file/SDP was given here, only bare transport_params, so
+    # there is no scan-type info to derive from -- an already-valid
+    # video_format is left as-is (never reverted to a placeholder).
+    assert receiver["video_format"] == "59.94i"
 
     active = nmos_client.get(
         f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/active/"
@@ -144,13 +147,44 @@ def test_patch_staged_with_transport_file_parses_sdp_and_activates(nmos_client):
     assert receiver["amber"]["source_ip"] == "192.168.10.9"
     assert receiver["payload_id"] == 96
     assert receiver["nmos_sdp"] == sdp_text
-    assert receiver["video_format"] == "sdp"
+    # This SDP has no fmtp "interlace" keyword, so there is no scan-type
+    # info to derive -- the field keeps its already-valid default.
+    assert receiver["video_format"] == "59.94i"
 
 
-def test_nmos_activate_forces_sdp_display_even_if_previously_fixed_manually(nmos_client):
-    """The operator's expected behaviour: once NMOS is driving a receiver,
-    its format field must show "SDP" in the WebGUI regardless of whatever
-    fixed value (e.g. "59.94i") was manually set before NMOS took over."""
+def test_nmos_activate_derives_video_format_from_sdp_interlace_flag(nmos_client):
+    """Operator-confirmed expected behaviour: the field always shows a
+    concrete value (never a literal "SDP" placeholder), updated live from
+    the SDP's actual content when NMOS drives the receiver. Here the
+    receiver was previously fixed to "59.94p" and the incoming SDP marks
+    the stream interlaced -- the real value must win."""
+    config = nmos_client.config_store.load_config()
+    config["receivers"]["video"][0]["video_format"] = "59.94p"
+    nmos_client.config_store.save_config(config)
+
+    sdp_text = (
+        "v=0\r\no=- 1 1 IN IP4 192.168.10.1\r\ns=Video Sender\r\nt=0 0\r\n"
+        "m=video 5004 RTP/AVP 96\r\nc=IN IP4 239.5.5.5/32\r\n"
+        "a=source-filter: incl IN IP4 239.5.5.5 192.168.10.9\r\n"
+        "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; interlace; exactframerate=30000/1001\r\n"
+    )
+    patch = {
+        "master_enable": True,
+        "transport_file": {"data": sdp_text, "type": "application/sdp"},
+        "activation": {"mode": "activate_immediate"},
+    }
+    nmos_client.patch(
+        f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/staged/", json=patch
+    )
+
+    receiver = nmos_client.config_store.load_config()["receivers"]["video"][0]
+    assert receiver["video_format"] == "59.94i"
+
+
+def test_nmos_activate_without_sdp_text_leaves_valid_video_format_unchanged(nmos_client):
+    """A controller that PATCHes only bare transport_params (no
+    transport_file) has given us no format info -- an already-valid value
+    must be left exactly as it was, not reset to any default."""
     config = nmos_client.config_store.load_config()
     config["receivers"]["video"][0]["video_format"] = "59.94p"
     nmos_client.config_store.save_config(config)
@@ -168,12 +202,36 @@ def test_nmos_activate_forces_sdp_display_even_if_previously_fixed_manually(nmos
     )
 
     receiver = nmos_client.config_store.load_config()["receivers"]["video"][0]
-    assert receiver["video_format"] == "sdp"
+    assert receiver["video_format"] == "59.94p"
 
 
-def test_nmos_activate_forces_sdp_display_for_audio_even_if_previously_fixed(nmos_client):
+def test_nmos_activate_derives_packet_time_from_sdp_ptime(nmos_client):
     config = nmos_client.config_store.load_config()
-    config["receivers"]["audio"][0]["sampling"] = "48kHz"
+    config["receivers"]["audio"][0]["packet_time"] = "0.125ms"
+    nmos_client.config_store.save_config(config)
+
+    sdp_text = (
+        "v=0\r\no=- 1 1 IN IP4 192.168.10.2\r\ns=Audio Sender\r\nt=0 0\r\n"
+        "m=audio 6000 RTP/AVP 97\r\nc=IN IP4 239.9.9.9/32\r\n"
+        "a=source-filter: incl IN IP4 239.9.9.9 10.0.0.1\r\n"
+        "a=ptime:1\r\n"
+    )
+    patch = {
+        "master_enable": True,
+        "transport_file": {"data": sdp_text, "type": "application/sdp"},
+        "activation": {"mode": "activate_immediate"},
+    }
+    nmos_client.patch(
+        f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.audio_id}/staged/", json=patch
+    )
+
+    receiver = nmos_client.config_store.load_config()["receivers"]["audio"][0]
+    assert receiver["packet_time"] == "1ms"
+    assert receiver["sampling"] == "48kHz"
+
+
+def test_nmos_activate_without_sdp_text_leaves_valid_packet_time_unchanged(nmos_client):
+    config = nmos_client.config_store.load_config()
     config["receivers"]["audio"][0]["packet_time"] = "0.125ms"
     nmos_client.config_store.save_config(config)
 
@@ -190,8 +248,7 @@ def test_nmos_activate_forces_sdp_display_for_audio_even_if_previously_fixed(nmo
     )
 
     receiver = nmos_client.config_store.load_config()["receivers"]["audio"][0]
-    assert receiver["sampling"] == "sdp"
-    assert receiver["packet_time"] == "sdp"
+    assert receiver["packet_time"] == "0.125ms"
 
 
 def test_scheduled_activation_mode_is_rejected(nmos_client):

@@ -23,7 +23,11 @@ _DEFAULT_ENDPOINT = {"source_ip": "", "group_ip": "", "port": 0}
 _DEFAULT_VIDEO_RECEIVER = {
     "enabled": False,
     "payload_id": 96,
-    # "sdp" | "59.94i" | "59.94p" -- when "sdp", the value from NMOS SDP is used
+    # "59.94i" | "59.94p" -- always a concrete value, never a literal "sdp"
+    # placeholder (removed per operator request: the field must always show
+    # a real value, updated live from the SDP's actual scan type when
+    # NMOS-driven -- see nmos/connection_api.py's _resolve_video_format()
+    # and NOTES.md "video_format等のSDP選択肢廃止").
     "video_format": "59.94i",
     "color_format": "YCbCr4:2:2_10bit_SDR",
     "amber": dict(_DEFAULT_ENDPOINT),
@@ -35,8 +39,8 @@ _DEFAULT_VIDEO_RECEIVER = {
 _DEFAULT_AUDIO_RECEIVER = {
     "enabled": False,
     "payload_id": 97,
-    "sampling": "sdp",  # "sdp" | "48kHz"
-    "packet_time": "sdp",  # "sdp" | "1ms" | "0.125ms"
+    "sampling": "48kHz",  # the only rate this system supports; always concrete
+    "packet_time": "1ms",  # "1ms" | "0.125ms" -- always concrete, see above
     "amber": dict(_DEFAULT_ENDPOINT),
     "blue": dict(_DEFAULT_ENDPOINT),
     "sdp_source": "manual",

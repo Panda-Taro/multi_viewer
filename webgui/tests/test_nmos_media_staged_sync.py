@@ -163,7 +163,8 @@ def test_invalidate_staged_for_unknown_index_is_a_noop(isolated_dirs):
 
 def test_nmos_then_manual_save_round_trip_video(combined_client):
     """Operator-confirmed expected behaviour, end to end:
-    1. NMOS activates -> WebGUI shows "SDP" (video_format == "sdp").
+    1. NMOS activates -> WebGUI shows a concrete format value (never a
+       literal "SDP" placeholder) and sdp_source == "nmos".
     2. Operator manually fixes the format and presses Save (PUT) ->
        backend updates to that exact value and sdp_source flips back to
        "manual". Nothing changes in config.json before that PUT fires."""
@@ -171,7 +172,10 @@ def test_nmos_then_manual_save_round_trip_video(combined_client):
 
     combined_client.patch(video_path, json=_activate_patch(True))
     receiver = combined_client.config_store.load_config()["receivers"]["video"][0]
-    assert receiver["video_format"] == "sdp"
+    # _activate_patch() sends bare transport_params (no SDP text), so
+    # there is no scan-type info to derive -- the already-valid default
+    # is kept, never a placeholder.
+    assert receiver["video_format"] == "59.94i"
     assert receiver["sdp_source"] == "nmos"
 
     manual_payload = _manual_video_payload(True)

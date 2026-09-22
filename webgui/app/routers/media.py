@@ -14,10 +14,10 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 
 router = APIRouter()
 
-VIDEO_FORMAT_CHOICES = {"sdp", "59.94i", "59.94p"}
+VIDEO_FORMAT_CHOICES = {"59.94i", "59.94p"}
 COLOR_FORMAT_CHOICES = {"YCbCr4:2:2_10bit_SDR"}
-AUDIO_SAMPLING_CHOICES = {"sdp", "48kHz"}
-AUDIO_PACKET_TIME_CHOICES = {"sdp", "1ms", "0.125ms"}
+AUDIO_SAMPLING_CHOICES = {"48kHz"}
+AUDIO_PACKET_TIME_CHOICES = {"1ms", "0.125ms"}
 
 
 class Endpoint(BaseModel):

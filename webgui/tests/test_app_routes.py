@@ -101,6 +101,35 @@ def test_update_video_receiver_rejects_invalid_video_format(client):
     assert response.status_code == 422
 
 
+def test_update_video_receiver_rejects_sdp_as_a_manual_choice(client):
+    """The "SDP" placeholder option was removed from video_format (and
+    audio's sampling/packet_time) -- the field always shows a concrete
+    value, so it must not be a manually-savable choice either."""
+    payload = {
+        "enabled": True,
+        "payload_id": 96,
+        "video_format": "sdp",
+        "color_format": "YCbCr4:2:2_10bit_SDR",
+        "amber": {"source_ip": "", "group_ip": "", "port": 0},
+        "blue": {"source_ip": "", "group_ip": "", "port": 0},
+    }
+    response = client.put("/api/media/video/1", json=payload)
+    assert response.status_code == 422
+
+
+def test_update_audio_receiver_rejects_sdp_as_a_manual_choice(client):
+    payload = {
+        "enabled": True,
+        "payload_id": 97,
+        "sampling": "sdp",
+        "packet_time": "1ms",
+        "amber": {"source_ip": "", "group_ip": "", "port": 0},
+        "blue": {"source_ip": "", "group_ip": "", "port": 0},
+    }
+    response = client.put("/api/media/audio/1", json=payload)
+    assert response.status_code == 422
+
+
 def test_update_ptp(client):
     response = client.put("/api/ptp", json={"domain": 5})
     assert response.status_code == 200

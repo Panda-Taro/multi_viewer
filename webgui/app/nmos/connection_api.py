@@ -297,8 +297,33 @@ def _apply_sdp_to_staged_transport_params(staged: dict, sdp_text: str) -> None:
             leg_state["destination_port"] = parsed["port"]
 
 
+def _resolve_video_format(current: Optional[str], leg: Optional[sdp_module.SdpLeg]) -> str:
+    """Always returns a concrete value ("59.94i"/"59.94p"), never the old
+    literal "sdp" placeholder (removed per operator request -- the field
+    must always display something real, updated live from the SDP's
+    actual scan type when NMOS-driven). If the SDP's fmtp conveyed a scan
+    type, use it; otherwise keep whatever concrete value is already
+    there, falling back to the spec default (requirement 6.1.1) only for
+    an invalid/legacy stored value."""
+    if leg is not None and leg.get("interlaced") is not None:
+        return "59.94i" if leg["interlaced"] else "59.94p"
+    if current in ("59.94i", "59.94p"):
+        return current
+    return "59.94i"
+
+
+def _resolve_packet_time(current: Optional[str], leg: Optional[sdp_module.SdpLeg]) -> str:
+    """Same idea as `_resolve_video_format`, for audio packet time."""
+    if leg is not None and leg.get("packet_time_ms") is not None:
+        return "0.125ms" if abs(leg["packet_time_ms"] - 0.125) < 0.01 else "1ms"
+    if current in ("1ms", "0.125ms"):
+        return current
+    return "1ms"
+
+
 def _activate(kind: str, index: int, receiver_id: str, staged: dict) -> None:
     payload_type: Optional[int] = None
+    legs: list[sdp_module.SdpLeg] = []
     sdp_text = staged.get("transport_file", {}).get("data")
     if sdp_text:
         legs = sdp_module.parse_sdp(sdp_text)
@@ -321,18 +346,16 @@ def _activate(kind: str, index: int, receiver_id: str, staged: dict) -> None:
     receiver_cfg["sdp_source"] = "nmos"
     receiver_cfg["nmos_sdp"] = sdp_text
 
-    # Once NMOS is driving a receiver, its format fields must show "SDP"
-    # in the WebGUI, not whatever fixed value was last set manually --
-    # confirmed as the expected behaviour: format display follows
-    # sdp_source ("nmos" -> "sdp", "manual" -> whatever the operator last
-    # saved). Without this, a receiver that had e.g. video_format fixed to
-    # "59.94i" before NMOS took over kept showing "59.94i" forever, even
-    # though NMOS -- not that fixed value -- was now actually driving it.
+    # A controller that only PATCHes bare transport_params (no SDP text)
+    # has no format info for us to derive -- first_leg is None in that
+    # case, and the resolver functions above just keep whatever concrete
+    # value is already stored.
+    first_leg = legs[0] if legs else None
     if kind == "video":
-        receiver_cfg["video_format"] = "sdp"
+        receiver_cfg["video_format"] = _resolve_video_format(receiver_cfg.get("video_format"), first_leg)
     else:
-        receiver_cfg["sampling"] = "sdp"
-        receiver_cfg["packet_time"] = "sdp"
+        receiver_cfg["sampling"] = "48kHz"  # the only rate this system supports
+        receiver_cfg["packet_time"] = _resolve_packet_time(receiver_cfg.get("packet_time"), first_leg)
 
     config_store.save_config(config)
     log_store.log_event(

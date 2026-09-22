@@ -69,3 +69,47 @@ def test_parse_sdp_without_source_filter_leaves_source_ip_none():
     legs = parse_sdp(text)
     assert legs[0]["source_ip"] is None
     assert legs[0]["group_ip"] == "239.1.1.1"
+
+
+def test_parse_interlaced_video_from_fmtp():
+    text = (
+        "m=video 5004 RTP/AVP 96\n"
+        "c=IN IP4 239.1.1.1/32\n"
+        "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; interlace; exactframerate=30000/1001\n"
+    )
+    legs = parse_sdp(text)
+    assert legs[0]["interlaced"] is True
+
+
+def test_parse_progressive_video_from_fmtp():
+    text = (
+        "m=video 5004 RTP/AVP 96\n"
+        "c=IN IP4 239.1.1.1/32\n"
+        "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=60000/1001\n"
+    )
+    legs = parse_sdp(text)
+    assert legs[0]["interlaced"] is False
+
+
+def test_interlaced_is_none_when_no_fmtp_line():
+    text = "m=video 5004 RTP/AVP 96\nc=IN IP4 239.1.1.1/32\n"
+    legs = parse_sdp(text)
+    assert legs[0]["interlaced"] is None
+
+
+def test_parse_ptime_for_audio():
+    text = "m=audio 6000 RTP/AVP 97\nc=IN IP4 239.1.1.2/32\na=ptime:1\n"
+    legs = parse_sdp(text)
+    assert legs[0]["packet_time_ms"] == 1.0
+
+
+def test_parse_fractional_ptime_for_audio():
+    text = "m=audio 6000 RTP/AVP 97\nc=IN IP4 239.1.1.2/32\na=ptime:0.125\n"
+    legs = parse_sdp(text)
+    assert legs[0]["packet_time_ms"] == 0.125
+
+
+def test_packet_time_ms_is_none_when_no_ptime_line():
+    text = "m=audio 6000 RTP/AVP 97\nc=IN IP4 239.1.1.2/32\n"
+    legs = parse_sdp(text)
+    assert legs[0]["packet_time_ms"] is None

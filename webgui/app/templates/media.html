@@ -28,7 +28,6 @@
     <div class="form-row">
       <label>映像フォーマット</label>
       <select data-field="video_format">
-        <option value="sdp" {% if r.video_format == "sdp" %}selected{% endif %}>SDP</option>
         <option value="59.94i" {% if r.video_format == "59.94i" %}selected{% endif %}>59.94i (デフォルト)</option>
         <option value="59.94p" {% if r.video_format == "59.94p" %}selected{% endif %}>59.94p</option>
       </select>
@@ -79,14 +78,12 @@
     <div class="form-row">
       <label>サンプリング</label>
       <select data-field="sampling">
-        <option value="sdp" {% if r.sampling == "sdp" %}selected{% endif %}>SDP</option>
         <option value="48kHz" {% if r.sampling == "48kHz" %}selected{% endif %}>48kHz</option>
       </select>
     </div>
     <div class="form-row">
       <label>パケット間隔</label>
       <select data-field="packet_time">
-        <option value="sdp" {% if r.packet_time == "sdp" %}selected{% endif %}>SDP</option>
         <option value="1ms" {% if r.packet_time == "1ms" %}selected{% endif %}>1ms</option>
         <option value="0.125ms" {% if r.packet_time == "0.125ms" %}selected{% endif %}>0.125ms</option>
       </select>
