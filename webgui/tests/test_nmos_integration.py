@@ -29,7 +29,8 @@ async def test_node_device_and_5_receivers_are_visible_via_query_api(isolated_di
     from app.nmos import registration_client
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     mock_app = create_mock_rds()
     async with _client_for(mock_app) as client:
@@ -65,7 +66,8 @@ async def test_heartbeat_accepted_after_registration(isolated_dirs):
     from app.nmos import registration_client
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     mock_app = create_mock_rds()
     async with _client_for(mock_app) as client:
@@ -86,7 +88,8 @@ async def test_re_registration_after_registry_forgets_node(isolated_dirs):
     from app.nmos import registration_client
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     mock_app = create_mock_rds()
     async with _client_for(mock_app) as client:

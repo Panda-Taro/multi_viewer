@@ -4,7 +4,8 @@ def test_build_node_has_required_fields(isolated_dirs):
     from app.nmos import resources
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     node = resources.build_node(config, identity)
     assert node["id"] == identity["node_id"]
@@ -30,7 +31,8 @@ def test_node_interfaces_chassis_and_port_id_match_is04_mac_pattern(isolated_dir
     from app.nmos import resources
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     node = resources.build_node(config, identity)
     pattern = re.compile(r"^([0-9a-f]{2}-){5}[0-9a-f]{2}$")
@@ -49,7 +51,8 @@ def test_node_clock_does_not_claim_unimplemented_ptp(isolated_dirs):
     from app.nmos import resources
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     node = resources.build_node(config, identity)
     assert node["clocks"] == [{"name": "clk0", "ref_type": "internal"}]
@@ -61,7 +64,8 @@ def test_build_device_references_node_and_all_receivers(isolated_dirs):
     from app.nmos import resources
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     device = resources.build_device(config, identity)
     assert device["id"] == identity["device_id"]
@@ -80,7 +84,8 @@ def test_build_all_receivers_returns_4_video_1_audio(isolated_dirs):
     from app.nmos import resources
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     receivers = resources.build_all_receivers(config, identity)
     assert len(receivers) == 5
@@ -111,7 +116,8 @@ def test_receiver_subscription_reflects_disabled_state_by_default(isolated_dirs)
     from app.nmos import resources
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     video = resources.build_video_receiver(0, config, identity)
     assert video["subscription"] == {"sender_id": None, "active": False}
@@ -123,7 +129,8 @@ def test_receiver_subscription_reflects_enabled_state_and_sender_id(isolated_dir
     from app.nmos import resources
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     config["receivers"]["video"][0]["enabled"] = True
     config["receivers"]["video"][0]["sender_id"] = "773372d9-b6e1-45d0-9b7a-593ae4317a0d"
@@ -145,7 +152,8 @@ def test_receiver_ids_match_identity_order(isolated_dirs):
     from app.nmos import resources
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     video_receivers = [resources.build_video_receiver(i, config, identity) for i in range(4)]
     for i, r in enumerate(video_receivers):

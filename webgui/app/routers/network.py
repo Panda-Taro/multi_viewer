@@ -60,15 +60,17 @@ def apply_network(update: NetworkApplyRequest):
     # Persist the *intended* configuration immediately so the GUI reflects
     # what was requested even before the reboot completes; nic_state.py
     # continues to report the OS's live view separately.
-    config = config_store.load_config()
-    config["network"][update.target] = {
-        "interface": update.interface,
-        "mode": update.mode,
-        "address": update.address,
-        "prefix": update.prefix,
-        "gateway": update.gateway,
-    }
-    config_store.save_config(config)
+    try:
+        with config_store.locked_config() as config:
+            config["network"][update.target] = {
+                "interface": update.interface,
+                "mode": update.mode,
+                "address": update.address,
+                "prefix": update.prefix,
+                "gateway": update.gateway,
+            }
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
 
     return {"status": "ok", "result": result}
 
@@ -80,11 +82,10 @@ class StreamingUpdate(BaseModel):
 
 @router.put("/api/streaming")
 def update_streaming(update: StreamingUpdate):
-    config = config_store.load_config()
-    config["streaming"]["bitrate_mbps"] = update.bitrate_mbps
-    config["streaming"]["url_path"] = update.url_path
     try:
-        config_store.save_config(config)
+        with config_store.locked_config() as config:
+            config["streaming"]["bitrate_mbps"] = update.bitrate_mbps
+            config["streaming"]["url_path"] = update.url_path
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
     log_store.log_event("webgui", "info", "視聴用配信設定を更新しました", **update.model_dump())

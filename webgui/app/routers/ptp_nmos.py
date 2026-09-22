@@ -34,10 +34,9 @@ class PtpUpdate(BaseModel):
 
 @router.put("/api/ptp")
 def update_ptp(update: PtpUpdate):
-    config = config_store.load_config()
-    config["ptp"]["domain"] = update.domain
     try:
-        config_store.save_config(config)
+        with config_store.locked_config() as config:
+            config["ptp"]["domain"] = update.domain
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
     log_store.log_event("webgui", "info", "PTP設定を更新しました", domain=update.domain)
@@ -75,16 +74,15 @@ def update_nmos(update: NmosUpdate):
     if error:
         raise HTTPException(status_code=422, detail=error)
 
-    config = config_store.load_config()
-    config["nmos"] = {
-        "rds_discovery": update.rds_discovery,
-        "rds_static": update.rds_static.model_dump(),
-        "common_port": update.common_port,
-        "source_port_mode": update.source_port_mode,
-        "source_port": update.source_port,
-    }
     try:
-        config_store.save_config(config)
+        with config_store.locked_config() as config:
+            config["nmos"] = {
+                "rds_discovery": update.rds_discovery,
+                "rds_static": update.rds_static.model_dump(),
+                "common_port": update.common_port,
+                "source_port_mode": update.source_port_mode,
+                "source_port": update.source_port,
+            }
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
     log_store.log_event("webgui", "info", "NMOS設定を更新しました")

@@ -276,7 +276,12 @@ def patch_staged(version: str, receiver_id: str, patch: dict = Body(...)) -> dic
                 "activation_time": None,
             }
             if mode == "activate_immediate":
-                _activate(kind, index, receiver_id, staged)
+                try:
+                    _activate(kind, index, receiver_id, staged)
+                except OSError as exc:
+                    raise HTTPException(
+                        status_code=500, detail=f"設定の保存に失敗しました: {exc}"
+                    ) from exc
                 staged["activation"]["activation_time"] = _tai_now()
 
         return staged
@@ -330,35 +335,34 @@ def _activate(kind: str, index: int, receiver_id: str, staged: dict) -> None:
         if legs and legs[0].get("payload_type") is not None:
             payload_type = legs[0]["payload_type"]
 
-    config = config_store.load_config()
-    receiver_cfg = _receiver_config(config, kind, index)
+    with config_store.locked_config() as config:
+        receiver_cfg = _receiver_config(config, kind, index)
 
-    receiver_cfg["enabled"] = staged["master_enable"]
-    for endpoint_key, leg in zip(("amber", "blue"), staged["transport_params"]):
-        endpoint = receiver_cfg[endpoint_key]
-        endpoint["source_ip"] = leg.get("source_ip") or ""
-        endpoint["group_ip"] = leg.get("multicast_ip") or ""
-        port = leg.get("destination_port")
-        if isinstance(port, int):
-            endpoint["port"] = port
-    if payload_type is not None:
-        receiver_cfg["payload_id"] = payload_type
-    receiver_cfg["sdp_source"] = "nmos"
-    receiver_cfg["nmos_sdp"] = sdp_text
-    receiver_cfg["sender_id"] = staged.get("sender_id")
+        receiver_cfg["enabled"] = staged["master_enable"]
+        for endpoint_key, leg in zip(("amber", "blue"), staged["transport_params"]):
+            endpoint = receiver_cfg[endpoint_key]
+            endpoint["source_ip"] = leg.get("source_ip") or ""
+            endpoint["group_ip"] = leg.get("multicast_ip") or ""
+            port = leg.get("destination_port")
+            if isinstance(port, int):
+                endpoint["port"] = port
+        if payload_type is not None:
+            receiver_cfg["payload_id"] = payload_type
+        receiver_cfg["sdp_source"] = "nmos"
+        receiver_cfg["nmos_sdp"] = sdp_text
+        receiver_cfg["sender_id"] = staged.get("sender_id")
 
-    # A controller that only PATCHes bare transport_params (no SDP text)
-    # has no format info for us to derive -- first_leg is None in that
-    # case, and the resolver functions above just keep whatever concrete
-    # value is already stored.
-    first_leg = legs[0] if legs else None
-    if kind == "video":
-        receiver_cfg["video_format"] = _resolve_video_format(receiver_cfg.get("video_format"), first_leg)
-    else:
-        receiver_cfg["sampling"] = "48kHz"  # the only rate this system supports
-        receiver_cfg["packet_time"] = _resolve_packet_time(receiver_cfg.get("packet_time"), first_leg)
+        # A controller that only PATCHes bare transport_params (no SDP text)
+        # has no format info for us to derive -- first_leg is None in that
+        # case, and the resolver functions above just keep whatever concrete
+        # value is already stored.
+        first_leg = legs[0] if legs else None
+        if kind == "video":
+            receiver_cfg["video_format"] = _resolve_video_format(receiver_cfg.get("video_format"), first_leg)
+        else:
+            receiver_cfg["sampling"] = "48kHz"  # the only rate this system supports
+            receiver_cfg["packet_time"] = _resolve_packet_time(receiver_cfg.get("packet_time"), first_leg)
 
-    config_store.save_config(config)
     log_store.log_event(
         "nmos",
         "info",

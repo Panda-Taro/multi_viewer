@@ -126,7 +126,15 @@ async def run_forever(
     exclude_registry_name: Optional[str] = None  # set for exactly one retry after a heartbeat failure in "auto" mode
 
     while True:
-        config = config_store.load_config()
+        # config_store calls block on a cross-process filelock (up to
+        # LOCK_TIMEOUT_SECONDS); this loop runs directly on the event loop
+        # (it's not a FastAPI sync `def` handler, which Starlette would
+        # already run in a threadpool), so calling them without
+        # to_thread() would stall the whole NMOS service's event loop --
+        # including its Connection API responsiveness -- for however long
+        # the lock is contended. Same reasoning as discover_registries()
+        # above.
+        config = await asyncio.to_thread(config_store.load_config)
         nmos_cfg = config["nmos"]
         discovery_mode = nmos_cfg["rds_discovery"]
         selected_registry_name: Optional[str] = None
@@ -152,7 +160,7 @@ async def run_forever(
             await sleep(RETRY_INTERVAL_SECONDS)
             continue
 
-        identity = identity_module.load_identity()
+        identity = await asyncio.to_thread(identity_module.load_identity)
         # Re-read after identity resolution: on a first-ever run,
         # load_identity() just generated and persisted fresh UUIDs, which
         # the `config` snapshot captured above (from before that write)
@@ -165,7 +173,7 @@ async def run_forever(
         # make it spuriously think something changed on the very next
         # heartbeat tick, forcing an unnecessary re-registration every
         # single time.
-        config = config_store.load_config()
+        config = await asyncio.to_thread(config_store.load_config)
         status_store.write_status(registration_status="registering", discovery_mode=discovery_mode, rds_url=base_url)
 
         async with client_factory(timeout=5.0) as client:
@@ -293,7 +301,7 @@ async def _heartbeat_loop(
     while True:
         await sleep(HEARTBEAT_INTERVAL_SECONDS)
 
-        current_cfg = config_store.load_config()
+        current_cfg = await asyncio.to_thread(config_store.load_config)
         if target_changed(current_cfg):
             return None  # target changed; let run_forever() pick up the new config
 

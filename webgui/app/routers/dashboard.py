@@ -79,11 +79,10 @@ class DisplayModeUpdate(BaseModel):
 
 @router.post("/api/display")
 def update_display_mode(update: DisplayModeUpdate):
-    config = config_store.load_config()
-    config["display"]["mode"] = update.mode
-    config["display"]["single_source"] = update.single_source
     try:
-        config_store.save_config(config)
+        with config_store.locked_config() as config:
+            config["display"]["mode"] = update.mode
+            config["display"]["single_source"] = update.single_source
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
     log_store.log_event(

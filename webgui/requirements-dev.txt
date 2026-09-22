@@ -1,0 +1,9 @@
+# Test-only dependencies, on top of requirements.txt. Not installed in
+# production (setup.sh only installs requirements.txt into the venv).
+#
+# Usage:
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pytest -q
+pytest==8.4.2
+pytest-asyncio==0.24.0
+httpx==0.28.1

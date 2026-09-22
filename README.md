@@ -138,12 +138,47 @@ SDPが実際に示す値（`a=fmtp`の`interlace`キーワード→59.94i/59.94p
 詳細な設計判断（config全体比較を採用した理由、発見した別の潜在バグの修正等）は
 NOTES.md参照。
 
+## ステップ2iのスコープ（今回・完了）: config.jsonのクロスプロセス排他
+
+ステップ2cで依頼されていた「config.jsonのクロスプロセス排他」が未実装のまま
+残っていたコードレビュー指摘の修正。WebGUIプロセスとNMOSプロセスという
+2つの独立したsystemdサービスが、それぞれ独自に
+「`load_config()` → 変更 → `save_config()`」を行っており、同時に実行すると
+後勝ちの書き込みが相手の変更を丸ごと巻き戻す（lost update）状態だった。
+
+- `filelock`パッケージによるクロスプロセスファイルロック（`/etc/multiviewer/config.lock`、
+  config.json自体とは別ファイル）を導入し、読み込み→変更→保存の**全体**を
+  1つの操作として直列化する`config_store.locked_config()`コンテキスト
+  マネージャを追加。依頼で列挙された9か所の書き込み箇所すべてをこれに統一
+- 読み込み専用の`load_config()`も同じロックを取るよう変更
+- ロック取得にタイムアウト（5秒）を設け、タイムアウト時はログに記録した上で
+  エラー（`OSError`のサブクラス）を送出
+- `identity.py`（IS-04/IS-05リクエストのたびに高頻度で呼ばれる）向けに、
+  変更が実際にあった場合だけ書き戻す`locked_config_optional_write()`を
+  別途追加（無条件書き戻しだと毎リクエストでconfig.json全体の再書き込みが
+  発生してしまうため）
+- `registration_client.py`の非同期ループ（`run_forever()`/`_heartbeat_loop()`）
+  内の`config_store`呼び出しを`asyncio.to_thread()`でラップし、ロック待ちが
+  NMOSプロセスのイベントループ全体をブロックしないようにした
+- 回帰テスト`tests/test_config_store_cross_process_lock.py`を追加。
+  `multiprocessing`で2つの実プロセスを起動し、それぞれ別のconfig.json
+  セクション（`ptp.domain`／`receivers.video[0]`）を300回ずつ並行更新して、
+  両方の変更が失われずに残ることを検証（修正前のコードでは実際に失敗する
+  ことを確認済み。詳細はNOTES.md）
+- `pytest-asyncio`を含むテスト専用依存関係を`webgui/requirements-dev.txt`に
+  分離・バージョン固定し、テスト手順（本READMEの「テスト」節）を更新
+
+設計判断の詳細（`filelock`を採用した理由、ロックファイルをconfig.json自体と
+分けた理由、`identity.py`のAPI変更等）はNOTES.md参照。
+
 やらないこと（後続ステップ）:
 
 - PTPクライアント実装（ステップ3）
 - MTLによるST2110-20/-30受信、ST2022-7冗長マージ、IGMP Join/Leaveの実処理（ステップ4）
 - FFmpegによる4分割合成、MediaMTXによるWebRTC配信（ステップ5）
 - 上記に対応するWebGUI画面はレイアウトのみ存在し、裏側の実処理には未接続
+- SDPからの解像度・フレームレート・ビット深度・colorimetryのパース（ステップ4で
+  MTL連携の要件が固まってから対応）
 
 ## ディレクトリ構成
 
@@ -558,18 +593,23 @@ NMOS Connection API: `http://<1GNIC IPアドレス>:<nmos.common_port>/x-nmos/co
 
 ```bash
 cd webgui
-pip install -r requirements.txt pytest httpx pytest-asyncio
+pip install -r requirements.txt -r requirements-dev.txt
 pytest -q
 ```
 
-136件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
+（テスト専用の依存関係は`webgui/requirements-dev.txt`にバージョン固定で明記している。
+本番環境（`setup.sh`）には`requirements.txt`のみをインストールし、テスト依存は
+インストールしない）
+
+138件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
 WebGUIの各画面とAPI・NMOS（IS-04リソース生成/Registrationクライアント/Node API/
 IS-05 Connection API/IS-07・IS-08スタブ/自作モックRDSとの結合テスト/mDNS発見の
 パース・優先度選択・フェイルオーバー・`auto`モード統合ロジック/`staged`キャッシュ
 無効化の回帰テスト/末尾スラッシュ有無どちらでも直接応答することの回帰テスト/
 NMOS activate時にSDPの実値（interlace・ptime）が反映される回帰テスト/
 手動保存APIが「SDP」を拒否することの確認/subscriptionの動的化・設定変更検知に
-よるRDSへの再登録の回帰テスト）を検証している。
+よるRDSへの再登録の回帰テスト/`multiprocessing`による2プロセス同時書き込みで
+config.jsonのlost updateが発生しないことの回帰テスト）を検証している。
 UIのブラウザでの目視確認は `uvicorn app.main:app` をローカルで起動して行った
 （Windows開発機のため `ip`/`netplan`/`psutil` 等OS依存機能は自動的にNo-op/N-A表示に
 フォールバックする設計）。

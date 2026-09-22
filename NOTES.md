@@ -665,3 +665,153 @@ pytest 136件、全件パス確認済み。追加したテスト:
 - 手動保存が`nmos_sdp`/`sender_id`をクリアすることを検証する1件
 - ハートビート継続中の設定変更が検知され、RDSへの再登録が実際に走ることを
   検証する1件（上記の通り、修正無効化での失敗を確認済み）
+
+# ステップ2i: config.jsonのクロスプロセス排他
+
+## 背景
+
+ステップ2のコードレビューで、以前ステップ2cで依頼されていた「config.jsonの
+クロスプロセス排他」が未実装のまま残っていることが判明した。`config_store.py`の
+ロックは`threading.Lock()`のみで、プロセス内でしか効かない。しかしconfig.jsonへの
+書き込みはWebGUIプロセス（multiviewer-webgui.service）とNMOSプロセス
+（multiviewer-nmos.service）という2つの独立したsystemdサービスから行われており、
+いずれも「`load_config()` → dictを変更 → `save_config()`」というread-modify-write。
+2プロセスがこれを同時に行うと、後から書いた側が相手の変更を丸ごと巻き戻す
+（lost update）。ステップ2dで修正した`staged`キャッシュ不整合と同じクラスの
+問題が、ファイルレベルで残っていた。ステップ4でMTLブリッジが3つ目の書き手として
+加わる前に固める必要があった。
+
+## 採用したロック方式
+
+`fcntl.flock`を素のosモジュールで直接呼ぶのではなく、`filelock`パッケージ
+（PyPI、`FileLock`クラス）を採用した。理由:
+
+- クロスプラットフォーム: Linux（本番のsystemdサービス）では内部的にflockを
+  使い、Windows（開発機でのテスト実行）ではmsvcrtベースのロックを使う。
+  `fcntl`を直接importするとWindows上で単体テストが一切実行できなくなる。
+- `filelock.Timeout`が`TimeoutError`（ひいては`OSError`）のサブクラスである
+  ことを実機で確認済み（`Timeout.__mro__`）。既存コードは保存失敗を
+  `except OSError`で捕捉して要件4.8.3.1（保存失敗時はエラー表示＋直前の値を
+  維持）を満たしていたため、ロックタイムアウトも同じ例外ハンドラで
+  自動的に処理される。
+- スレッドセーフかつ同一スレッドからの再入（reentrant acquisition）に
+  対応していることを確認済み（後述の`locked_config_optional_write`で
+  必須の性質）。
+
+ロックファイルは`config.json`自体ではなく専用ファイル
+（`/etc/multiviewer/config.lock`）にした。`save_config()`の書き込みは
+一時ファイル＋`os.replace()`によるアトミックな差し替えで、これは
+config.jsonのinodeを毎回入れ替える。config.json自体をinode単位でロック
+すると、replace後にロックが古いinodeに対してのままになり意味を失う
+（新しいinodeを開いた別プロセスは別のロックとして扱われてしまう）。
+専用の、決して置き換えられないロックファイルを別に用意することでこれを回避した。
+
+読み込み専用の`load_config()`も同じロックを取るようにした（要求は
+「共有ロックで構いません」だったが、`filelock.FileLock`は排他ロックのみを
+提供するAPIのため、共有/排他を作り分けず単一の排他ロッククラスに統一した。
+本システムの設定読み書き頻度は極めて低く、読み取り同士が直列化されても
+実用上の問題にならないと判断）。
+
+ロック取得のタイムアウトは5秒（`LOCK_TIMEOUT_SECONDS`）。設定の保存自体は
+ミリ秒オーダーで終わるはずなので、通常のリトライには十分な猶予がありつつ、
+ロック保持側がハングした場合に呼び出し元を無期限にブロックしない値とした。
+タイムアウト時は`log_store`にエラーを記録した上で`filelock.Timeout`
+（=`OSError`）を再送出する。
+
+## `locked_config()`と9か所の書き込み統一
+
+「読み込み→変更→保存」をひとつのコンテキストマネージャに統一:
+
+```python
+with config_store.locked_config() as config:
+    config["ptp"]["domain"] = 1
+```
+
+ブロックの開始でロックを取得しconfig.jsonを読み込み、正常終了時に
+自動的に書き戻す（例外発生時は何も書き込まず、ロックのみ解放する）。
+依頼で列挙された9か所すべてをこれに移行した:
+WebGUI側7か所（`dashboard.py`のdisplay更新、`media.py`の映像/音声Receiver
+更新×2、`network.py`のNIC適用/配信設定更新×2、`ptp_nmos.py`のPTP/NMOS
+設定更新×2）、NMOS側2か所（`connection_api.py`の`_activate()`、
+`identity.py`のidentity解決）。
+
+## `identity.py`の設計変更（9か所のうち最もアーキテクチャが異なる箇所）
+
+他の8か所は「毎回必ず変更して保存する」パターンだが、`identity.py`の
+`ensure_identity()`は「まだ無いUUIDだけ埋めて保存、既にあれば何もしない」
+という条件付き書き込みで、かつ`load_identity()`は`connection_api.py`の
+IS-05リクエストや`node_api.py`のIS-04リクエストのたびに（つまり高頻度に）
+呼ばれる。これに単純に`locked_config()`（無条件に書き戻す）を使うと、
+実質的にすべてのIS-05/IS-04リクエストがconfig.jsonの全体アトミック
+再書き込みを引き起こし、無駄なディスクI/Oとロック競合を増やすことになる。
+
+このため`config_store.py`に`locked_config_optional_write()`を追加した。
+ロック取得からの読み込みは`locked_config()`と同じだが、書き戻しを
+自動で行わず、代わりに`save()`コールバックを渡す。呼び出し側が実際に
+変更した場合だけ`save()`を呼ぶ:
+
+```python
+with config_store.locked_config_optional_write() as (config, save):
+    if ensure_identity(config):
+        save()
+    identity = config["identity"]
+```
+
+`ensure_identity()`自体は純粋なインメモリ変更関数に変更し（戻り値を
+「変更したconfig dict」から「変更が発生したかを示すbool」に変更）、
+保存の判断と実行は呼び出し側（`identity.py`の`load_identity()`、
+`node_api.py`の`_current_config_and_identity()`）に一本化した。
+以前は「`load_config()`で読み込み → `ensure_identity()`内部で別途
+`save_config()`」という2回のロック取得に分かれており、その間に
+別プロセスの書き込みが割り込む競合ウィンドウが理論上存在した
+（初回起動時のUUID生成という一度きりのタイミングでしか実害はないが、
+これも1回のロック取得に統合して完全に閉じた）。
+
+このAPI変更に伴い、`ensure_identity(config)["identity"]`という戻り値
+契約に依存していた既存テスト（`test_nmos_resources.py`、
+`test_nmos_registration_client.py`、`test_nmos_integration.py`、
+`test_nmos_identity.py`）を新しい契約
+（`ensure_identity(config)`はboolを返し、`config`はin-placeで変更される）
+に合わせて更新した。
+
+## `registration_client.py`のイベントループブロッキング対策
+
+`run_forever()`と`_heartbeat_loop()`は`async def`のコルーチンで、
+FastAPIのsync `def`ルートハンドラ（Starletteが自動的にスレッドプールで
+実行する）とは異なり、直接`await`せずに同期処理を呼ぶとイベントループ
+全体をブロックする。ロック導入前から存在していた同じ問題（mDNS探索の
+`mdns_discovery.discover_registries()`）に対してはすでに
+`asyncio.to_thread()`でラップする対策済みだったが、`config_store.load_config()`
+や`identity_module.load_identity()`の直接呼び出し（`run_forever()`内2か所、
+`identity`解決1か所、`_heartbeat_loop()`内1か所）は未対応のまま残っていた。
+ロック導入により`load_config()`は最大`LOCK_TIMEOUT_SECONDS`（5秒）ブロック
+しうる同期呼び出しになったため、同じ`asyncio.to_thread()`パターンで
+全4か所をラップした。`_heartbeat_loop()`は5秒間隔で常時実行され続ける
+ループのため、ここが未対応のままだとNMOSプロセスのConnection API応答性が
+定期的に悪化するリスクがあった。
+
+## 検証
+
+修正前の状態を一時的に再現（`config_store.py`の`_acquired_lock()`から
+`with _file_lock:`を外し、実質的なロック取得を無効化）し、新規回帰テスト
+`test_config_store_cross_process_lock.py::test_concurrent_processes_do_not_lose_updates_to_different_sections`
+が実際に失敗することを確認してから修正を復元した。失敗の様子は
+「最終値が期待値と食い違う（lost update）」ではなく、Windows環境では
+2プロセスが同時に`os.replace()`で同じconfig.jsonへリネームしようとして
+`PermissionError: [WinError 5]`でワーカープロセスがクラッシュするという
+形で現れた（`proc.exitcode == 0`のアサーションで検出）。これはPOSIXの
+`os.replace()`とは異なり、Windowsではアトミックなファイル置換に排他制御が
+必須であることを示しており、ロックなしの並行書き込みが安全でないという
+同じ根本原因を別の形で証明している。
+
+回帰テストは`multiprocessing`で実プロセスを2つ起動し（スレッドでは
+プロセス内ロックで通ってしまい検出できないため）、一方は`ptp.domain`を、
+もう一方は`receivers.video[0]`の`payload_id`/`enabled`を300回ずつ
+`locked_config()`経由でインクリメント/トグルし、両プロセス終了後に
+最終値が「両方の変更が一切失われず正確に反映された値」
+（`ptp.domain == 300`、`payload_id == 96 + 300`、`enabled == (300 % 2 == 1)`）
+になっていることを検証する。ワーカー関数はpickle可能な独立モジュール
+`tests/config_store_mp_worker.py`に切り出した（Windowsの`multiprocessing`は
+`spawn`方式のため、テストファイル内のローカル関数はpickleできない）。
+
+修正後、pytest 138件（既存137件＋新規回帰テスト1件）、全件パス確認済み。

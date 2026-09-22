@@ -36,7 +36,8 @@ async def test_register_all_posts_node_device_then_5_receivers(isolated_dirs):
     from app.nmos import registration_client
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})
@@ -59,7 +60,8 @@ async def test_register_all_raises_on_http_error(isolated_dirs):
     from app.nmos import registration_client
 
     config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    identity_module.ensure_identity(config)
+    identity = config["identity"]
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)

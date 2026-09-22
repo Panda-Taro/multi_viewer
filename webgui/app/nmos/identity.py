@@ -15,10 +15,11 @@ from .. import config_store
 RECEIVER_COUNT = {"video": 4, "audio": 1}
 
 
-def ensure_identity(config: dict) -> dict:
-    """Fill in any missing identity UUIDs and persist them. Returns the
-    (possibly updated) config. Idempotent: a config that already has every
-    ID is returned unchanged and not re-saved."""
+def ensure_identity(config: dict) -> bool:
+    """Fill in any missing identity UUIDs in place. Returns True if
+    anything was actually filled in, so callers holding a config lock can
+    decide whether a save is needed -- idempotent: a config that already
+    has every ID is left unchanged and reports False."""
     identity = config["identity"]
     changed = False
 
@@ -48,18 +49,27 @@ def ensure_identity(config: dict) -> dict:
     identity["audio_receiver_ids"] = audio_ids
 
     config["identity"] = identity
-    if changed:
-        config_store.save_config(config)
-    return config
+    return changed
 
 
 def load_identity() -> dict:
     """Convenience: load config, ensure identity, return just the identity
     section (with node_id/device_id/video_receiver_ids/audio_receiver_ids
-    all guaranteed non-null)."""
-    config = config_store.load_config()
-    config = ensure_identity(config)
-    return config["identity"]
+    all guaranteed non-null).
+
+    Loading and the (usually unnecessary) fill-in-and-save happen under a
+    single lock acquisition -- doing this as two separate
+    load_config()-then-save_config() calls, as an earlier version did,
+    left a window between them where another process could write config.json
+    in between; that write would then be silently discarded by this call's
+    own save (a lost update, the same class of bug this whole locking
+    scheme exists to close).
+    """
+    with config_store.locked_config_optional_write() as (config, save):
+        if ensure_identity(config):
+            save()
+        identity = config["identity"]
+    return identity
 
 
 def receiver_lookup(identity: dict) -> dict[str, tuple[str, int]]:

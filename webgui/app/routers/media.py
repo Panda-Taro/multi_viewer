@@ -90,28 +90,27 @@ def update_video_receiver(index: int, update: VideoReceiverUpdate):
     if error:
         raise HTTPException(status_code=422, detail=error)
 
-    config = config_store.load_config()
-    receivers = config["receivers"]["video"]
-    idx = _receiver_index(index, len(receivers))
-
-    previous = receivers[idx]
-    receivers[idx] = {
-        **previous,
-        "enabled": update.enabled,
-        "payload_id": update.payload_id,
-        "video_format": update.video_format,
-        "color_format": update.color_format,
-        "amber": update.amber.model_dump(),
-        "blue": update.blue.model_dump(),
-        "sdp_source": "manual",
-        # A manual save fully supersedes whatever NMOS last set; leaving
-        # the old SDP/sender_id around would misrepresent this receiver as
-        # still subscribed to a Sender it may no longer resemble at all.
-        "nmos_sdp": None,
-        "sender_id": None,
-    }
     try:
-        config_store.save_config(config)
+        with config_store.locked_config() as config:
+            receivers = config["receivers"]["video"]
+            idx = _receiver_index(index, len(receivers))
+
+            previous = receivers[idx]
+            receivers[idx] = {
+                **previous,
+                "enabled": update.enabled,
+                "payload_id": update.payload_id,
+                "video_format": update.video_format,
+                "color_format": update.color_format,
+                "amber": update.amber.model_dump(),
+                "blue": update.blue.model_dump(),
+                "sdp_source": "manual",
+                # A manual save fully supersedes whatever NMOS last set; leaving
+                # the old SDP/sender_id around would misrepresent this receiver as
+                # still subscribed to a Sender it may no longer resemble at all.
+                "nmos_sdp": None,
+                "sender_id": None,
+            }
     except OSError as exc:
         # Requirement 4.8.3.1: on save failure, show an error and keep the
         # previous value -- returning 500 without having mutated the saved
@@ -136,25 +135,24 @@ def update_audio_receiver(index: int, update: AudioReceiverUpdate):
     if error:
         raise HTTPException(status_code=422, detail=error)
 
-    config = config_store.load_config()
-    receivers = config["receivers"]["audio"]
-    idx = _receiver_index(index, len(receivers))
-
-    previous = receivers[idx]
-    receivers[idx] = {
-        **previous,
-        "enabled": update.enabled,
-        "payload_id": update.payload_id,
-        "sampling": update.sampling,
-        "packet_time": update.packet_time,
-        "amber": update.amber.model_dump(),
-        "blue": update.blue.model_dump(),
-        "sdp_source": "manual",
-        "nmos_sdp": None,
-        "sender_id": None,
-    }
     try:
-        config_store.save_config(config)
+        with config_store.locked_config() as config:
+            receivers = config["receivers"]["audio"]
+            idx = _receiver_index(index, len(receivers))
+
+            previous = receivers[idx]
+            receivers[idx] = {
+                **previous,
+                "enabled": update.enabled,
+                "payload_id": update.payload_id,
+                "sampling": update.sampling,
+                "packet_time": update.packet_time,
+                "amber": update.amber.model_dump(),
+                "blue": update.blue.model_dump(),
+                "sdp_source": "manual",
+                "nmos_sdp": None,
+                "sender_id": None,
+            }
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
 

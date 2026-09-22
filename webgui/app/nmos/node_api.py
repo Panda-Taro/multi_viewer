@@ -34,8 +34,10 @@ def _check_version(version: str) -> None:
 
 
 def _current_config_and_identity() -> tuple[dict, dict]:
-    config = config_store.load_config()
-    identity = identity_module.ensure_identity(config)["identity"]
+    with config_store.locked_config_optional_write() as (config, save):
+        if identity_module.ensure_identity(config):
+            save()
+        identity = config["identity"]
     return config, identity
 
 
