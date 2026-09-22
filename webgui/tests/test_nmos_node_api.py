@@ -52,6 +52,16 @@ def test_get_device_by_id(node_client):
     assert response.json()["id"] == device_id
 
 
+def test_get_device_by_id_with_trailing_slash_is_served_directly(node_client):
+    """Regression test: per the AMWA IS-04 RAML, single-resource URLs like
+    this have no trailing slash canonically, but some clients still send
+    one -- both forms must be served directly, not via a 307 (see the
+    same issue fixed in connection_api.py)."""
+    device_id = node_client.identity["device_id"]
+    response = node_client.get(f"/x-nmos/node/v1.3/devices/{device_id}/", follow_redirects=False)
+    assert response.status_code == 200
+
+
 def test_get_device_unknown_id_is_404(node_client):
     response = node_client.get("/x-nmos/node/v1.3/devices/not-a-real-id")
     assert response.status_code == 404
@@ -74,6 +84,12 @@ def test_get_receiver_by_id(node_client):
     assert response.status_code == 200
     assert response.json()["id"] == receiver_id
     assert response.json()["format"] == "urn:x-nmos:format:video"
+
+
+def test_get_receiver_by_id_with_trailing_slash_is_served_directly(node_client):
+    receiver_id = node_client.identity["video_receiver_ids"][0]
+    response = node_client.get(f"/x-nmos/node/v1.3/receivers/{receiver_id}/", follow_redirects=False)
+    assert response.status_code == 200
 
 
 def test_senders_sources_flows_are_empty(node_client):

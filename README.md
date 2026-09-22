@@ -224,6 +224,15 @@ config.jsonへ反映する（`enabled`＝`master_enable`、`amber`/`blue`＝`tra
 （値を変えない）再activateで手動変更を上書きしてしまう不具合を防いでいる
 （ステップ2dで修正。詳細な経緯・検証方法はNOTES.md参照）。
 
+**URLの末尾スラッシュは、あり・なし両方で直接応答する**（ステップ2eで修正）。
+AMWA公式のRAMLでは`staged`/`active`/`constraints`/`transporttype`等の末端リソースに
+末尾スラッシュを付けないのが正規URLだが、当初の実装は全ルートに付けており、
+実機のNMOSコントローラが規格通り末尾スラッシュ無しでPATCHした際にFastAPIの
+デフォルト挙動で307リダイレクトが返り、PATCHがそれに追従されず失敗する不具合が
+あった（本システム側ではリダイレクトの時点でハンドラに到達しないためログにも
+一切残らなかった）。両方の形を明示的に登録することでリダイレクト自体を無くした
+（詳細はNOTES.md「ステップ2e」参照）。
+
 ### `/x-nmos/`ルート: channelmapping/connection/events/node の4API構成
 
 要件4.8.4.3.2.2.1が`("channelmapping","connection","events","node")`を1つの共通ポートで
@@ -489,11 +498,12 @@ pip install -r requirements.txt pytest httpx pytest-asyncio
 pytest -q
 ```
 
-108件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
+118件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
 WebGUIの各画面とAPI・NMOS（IS-04リソース生成/Registrationクライアント/Node API/
 IS-05 Connection API/IS-07・IS-08スタブ/自作モックRDSとの結合テスト/mDNS発見の
 パース・優先度選択・フェイルオーバー・`auto`モード統合ロジック/`staged`キャッシュ
-無効化の回帰テスト）を検証している。
+無効化の回帰テスト/末尾スラッシュ有無どちらでも直接応答することの回帰テスト）を
+検証している。
 UIのブラウザでの目視確認は `uvicorn app.main:app` をローカルで起動して行った
 （Windows開発機のため `ip`/`netplan`/`psutil` 等OS依存機能は自動的にNo-op/N-A表示に
 フォールバックする設計）。

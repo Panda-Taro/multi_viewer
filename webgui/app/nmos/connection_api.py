@@ -29,6 +29,23 @@ Only `activate_immediate` is supported; scheduled activation
 external controller behaviour in this NMOS-Testing-Tool-free environment
 was available to validate a scheduler against, so it was left out rather
 than shipped unverified. See NOTES.md.
+
+Route paths: per the official AMWA IS-05 RAML (nmos-device-connection-
+management ConnectionAPI.raml), `single`, `single/receivers`,
+`single/receivers/{id}`, and the leaf resources
+(`constraints`/`staged`/`active`/`transporttype`) do NOT have a trailing
+slash in their canonical URL -- only the top-level "list what's available"
+resources (`/x-nmos/connection/`, `/x-nmos/connection/{version}/`) do,
+since those return directory-style listings whose *entries* are
+slash-suffixed strings (e.g. `["single/"]`), which is a different thing
+from the URL used to fetch that listing. An earlier revision registered
+every route with a trailing slash, which is spec-incorrect; a real NMOS
+controller requesting the canonical (no-slash) URL got a 307 from
+FastAPI's default redirect_slashes behaviour, its PATCH did not follow
+the redirect, and the failure never reached this module's own code (so
+nothing was logged here) -- see NOTES.md for the incident this fixes.
+Every affected route below is now registered under BOTH forms (with and
+without the trailing slash) so neither direction ever needs a redirect.
 """
 from __future__ import annotations
 
@@ -159,12 +176,14 @@ def version_index(version: str) -> list[str]:
     return ["single/"]
 
 
+@router.get("/x-nmos/connection/{version}/single")
 @router.get("/x-nmos/connection/{version}/single/")
 def single_index(version: str) -> list[str]:
     _check_version(version)
     return ["receivers/"]
 
 
+@router.get("/x-nmos/connection/{version}/single/receivers")
 @router.get("/x-nmos/connection/{version}/single/receivers/")
 def list_receivers(version: str) -> list[str]:
     _check_version(version)
@@ -173,6 +192,7 @@ def list_receivers(version: str) -> list[str]:
     return [f"{rid}/" for rid in ids]
 
 
+@router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}")
 @router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/")
 def receiver_index(version: str, receiver_id: str) -> list[str]:
     _check_version(version)
@@ -180,6 +200,7 @@ def receiver_index(version: str, receiver_id: str) -> list[str]:
     return ["constraints/", "staged/", "active/", "transporttype/"]
 
 
+@router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/constraints")
 @router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/constraints/")
 def get_constraints(version: str, receiver_id: str) -> list[dict]:
     _check_version(version)
@@ -187,6 +208,7 @@ def get_constraints(version: str, receiver_id: str) -> list[dict]:
     return [{}, {}]  # unconstrained, one object per leg (Amber, Blue)
 
 
+@router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/transporttype")
 @router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/transporttype/")
 def get_transport_type(version: str, receiver_id: str) -> str:
     _check_version(version)
@@ -194,6 +216,7 @@ def get_transport_type(version: str, receiver_id: str) -> str:
     return "urn:x-nmos:transport:rtp.mcast"
 
 
+@router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/staged")
 @router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/staged/")
 def get_staged(version: str, receiver_id: str) -> dict:
     _check_version(version)
@@ -201,6 +224,7 @@ def get_staged(version: str, receiver_id: str) -> dict:
     return _get_or_init_staged(receiver_id, kind, index)
 
 
+@router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/active")
 @router.get("/x-nmos/connection/{version}/single/receivers/{receiver_id}/active/")
 def get_active(version: str, receiver_id: str) -> dict:
     _check_version(version)
@@ -209,6 +233,7 @@ def get_active(version: str, receiver_id: str) -> dict:
     return _active_from_config(_receiver_config(config, kind, index))
 
 
+@router.patch("/x-nmos/connection/{version}/single/receivers/{receiver_id}/staged")
 @router.patch("/x-nmos/connection/{version}/single/receivers/{receiver_id}/staged/")
 def patch_staged(version: str, receiver_id: str, patch: dict = Body(...)) -> dict:
     _check_version(version)

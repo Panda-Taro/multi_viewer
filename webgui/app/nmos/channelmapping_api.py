@@ -40,6 +40,7 @@ def get_io(version: str) -> dict:
     return {"ios": {}}
 
 
+@router.get("/x-nmos/channelmapping/{version}/map")
 @router.get("/x-nmos/channelmapping/{version}/map/")
 def map_index(version: str) -> list[str]:
     _check_version(version)

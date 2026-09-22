@@ -35,4 +35,8 @@ def test_channelmapping_index_and_empty_io():
     assert client.get("/x-nmos/channelmapping/v1.0/").json() == ["io/", "map/"]
     assert client.get("/x-nmos/channelmapping/v1.0/io").json() == {"ios": {}}
     assert client.get("/x-nmos/channelmapping/v1.0/map/activations").json() == []
+    # Regression: "map" (no trailing slash) must be served directly too.
+    r = client.get("/x-nmos/channelmapping/v1.0/map", follow_redirects=False)
+    assert r.status_code == 200
+    assert r.json() == ["activations/"]
     assert client.get("/x-nmos/channelmapping/v9.9/").status_code == 404

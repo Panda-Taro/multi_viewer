@@ -183,6 +183,74 @@ def test_master_enable_false_disables_receiver_on_activation(nmos_client):
     assert config["receivers"]["video"][0]["enabled"] is False
 
 
+class TestNoTrailingSlashUrls:
+    """Regression tests for the 307-redirect bug: a real NMOS controller
+    requests the canonical (no trailing slash) IS-05 URLs per the AMWA
+    RAML spec, e.g. PATCH .../staged, not .../staged/. An earlier
+    revision only registered the trailing-slash form, so FastAPI's
+    default redirect_slashes behaviour returned a 307 for these -- which
+    the controller's PATCH did not follow, and which never reached this
+    module's handlers at all (so nothing was logged, and config.json was
+    never touched). `follow_redirects=False` here makes sure the request
+    is served directly, not merely reachable via an intermediate hop."""
+
+    def test_patch_staged_without_trailing_slash_is_served_directly(self, nmos_client):
+        patch = {"master_enable": True, "activation": {"mode": "activate_immediate"}}
+        response = nmos_client.patch(
+            f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/staged",
+            json=patch,
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        config = nmos_client.config_store.load_config()
+        assert config["receivers"]["video"][0]["enabled"] is True
+
+    def test_get_active_without_trailing_slash_is_served_directly(self, nmos_client):
+        response = nmos_client.get(
+            f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/active",
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+
+    def test_get_staged_without_trailing_slash_is_served_directly(self, nmos_client):
+        response = nmos_client.get(
+            f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/staged",
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+
+    def test_get_constraints_without_trailing_slash_is_served_directly(self, nmos_client):
+        response = nmos_client.get(
+            f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/constraints",
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+
+    def test_get_transporttype_without_trailing_slash_is_served_directly(self, nmos_client):
+        response = nmos_client.get(
+            f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/transporttype",
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+
+    def test_list_receivers_without_trailing_slash_is_served_directly(self, nmos_client):
+        response = nmos_client.get(
+            "/x-nmos/connection/v1.1/single/receivers", follow_redirects=False
+        )
+        assert response.status_code == 200
+
+    def test_receiver_index_without_trailing_slash_is_served_directly(self, nmos_client):
+        response = nmos_client.get(
+            f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}",
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+
+    def test_single_index_without_trailing_slash_is_served_directly(self, nmos_client):
+        response = nmos_client.get("/x-nmos/connection/v1.1/single", follow_redirects=False)
+        assert response.status_code == 200
+
+
 def test_audio_receiver_activation(nmos_client):
     patch = {
         "master_enable": True,

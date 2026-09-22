@@ -377,3 +377,61 @@ config.jsonから再初期化される）。恒久化されていない、コン
 （`media.py`の`invalidate_staged_for`呼び出しをコメントアウトして再実行したところ、
 5件中4件が実際に失敗することを確認し、その後修正を元に戻した）。単に「テストが
 通る」だけでなく、「テストが正しくこのバグを再現・検出できる」ことまで検証済み。
+
+---
+
+# ステップ2e: IS-05 PATCH /stagedが307になり実機NMOSコントローラから失敗するバグの修正
+
+## バグの内容（実機の別NMOSコントローラのログから発覚）
+
+実際のNMOSコントローラから本システムへIS-05のactivate（Join指示）を出したところ
+失敗した。コントローラ側のログには`PATCH .../staged - 307 Temporary Redirect`と
+記録されていたが、**本システム側にはエラーログが一切残らず、config.jsonも
+変化しなかった**。
+
+## 原因
+
+`connection_api.py`のIS-05エンドポイント（`staged`/`active`/`constraints`/
+`transporttype`、および`single`/`single/receivers`/`single/receivers/{id}`）を
+すべて**末尾スラッシュ付き**（例: `.../staged/`）でFastAPIに登録していた。
+
+しかしAMWA公式のIS-05 RAML定義（`nmos-device-connection-management`
+`ConnectionAPI.raml`、GitHub上で実際に取得して確認）では、これらの末端リソースの
+正規URLに末尾スラッシュは**付かない**（例: 409応答の`Location`ヘッダー例が
+`.../staged`であり`.../staged/`ではない）。実機のNMOSコントローラは仕様通り
+末尾スラッシュ無しでPATCHしてきており、これに対しFastAPI/Starletteのデフォルト
+挙動（`redirect_slashes=True`）が307を返していた。多くのHTTPクライアント
+（特にPATCHのような非冪等メソッド）は307を自動的に追従しないため、コントローラ側は
+失敗として扱っていた。
+
+「本システム側にログが残らない」理由: Starletteの末尾スラッシュ・リダイレクト処理は
+ルーティングの段階で完結し、実際のハンドラ関数（`patch_staged()`等、
+`log_store.log_event()`の呼び出しがある場所）には一切到達しない。そのため
+本システムからは何も異常が見えなかった。
+
+自分でこの実装をした際、JSONレスポンスのボディ内に返す「ディレクトリ一覧」の
+文字列（例: `["staged/", "active/"]`）と、そのリソース自体を取得するための
+URLパスを混同していたことが根本原因（ボディの文字列は正しく末尾スラッシュ付きで
+問題ない。混同していたのはURLパスの方）。
+
+## 修正
+
+`connection_api.py`・`node_api.py`・`channelmapping_api.py`の該当ルートを、
+**末尾スラッシュあり・なしの両方で登録**するよう修正した（`@router.get(...)`を
+2つ重ねて同じハンドラにマッピング）。片方だけを正規化して他方をリダイレクトに
+任せる方式ではなく両対応にしたのは、PATCHのような非冪等メソッドでリダイレクトに
+依存するのが根本的に脆弱（多くのクライアントが追従しない）と判断したため。
+`events_api.py`は元々すでに両対応で実装していたため変更不要だった。
+
+`/x-nmos/connection/`・`/x-nmos/connection/{version}/`（と各APIの相当する
+バージョン一覧・ルート）は、RAML上でも実際に末尾スラッシュ付きの正規URLだった
+（ディレクトリ一覧を返す「一覧の一覧」的な位置づけのリソースのため）ため変更していない。
+
+## 検証
+
+`fastapi.testclient.TestClient`で実際に、末尾スラッシュ付きのみ登録したルートに
+対し末尾スラッシュ無しでPATCHすると`307 Temporary Redirect`が返ることを再現して
+から修正した（`follow_redirects=False`で直接確認）。修正後は同じリクエストが
+`307`を経由せず直接`200`を返すことを、新規回帰テスト
+（`test_nmos_connection_api.py::TestNoTrailingSlashUrls`、
+`test_nmos_node_api.py`・`test_nmos_stub_apis.py`の追加ケース）で確認した。

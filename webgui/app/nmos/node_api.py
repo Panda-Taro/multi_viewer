@@ -67,6 +67,7 @@ def list_devices(version: str) -> list[dict]:
 
 
 @router.get("/x-nmos/node/{version}/devices/{device_id}")
+@router.get("/x-nmos/node/{version}/devices/{device_id}/")
 def get_device(version: str, device_id: str) -> dict:
     _check_version(version)
     config, identity = _current_config_and_identity()
@@ -84,6 +85,7 @@ def list_receivers(version: str) -> list[dict]:
 
 
 @router.get("/x-nmos/node/{version}/receivers/{receiver_id}")
+@router.get("/x-nmos/node/{version}/receivers/{receiver_id}/")
 def get_receiver(version: str, receiver_id: str) -> dict:
     _check_version(version)
     config, identity = _current_config_and_identity()
