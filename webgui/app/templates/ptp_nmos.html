@@ -20,6 +20,8 @@
 
   <div class="panel" id="nmos-panel">
     <div class="panel-title">NMOS設定</div>
+
+    <div class="panel-section-title">RDS登録</div>
     <div class="form-row">
       <label>RDS登録方式</label>
       <select id="nmos-rds-discovery">
@@ -27,27 +29,25 @@
         <option value="auto" {% if config.nmos.rds_discovery == "auto" %}selected{% endif %}>自動 (mDNS+DNS-SD)</option>
       </select>
     </div>
-    <div class="form-row">
+    <div class="form-row" data-gray-group="rds-static">
       <label>RDS IPアドレス</label>
       <input type="text" id="nmos-rds-address" value="{{ config.nmos.rds_static.address }}">
     </div>
-    <div class="form-row">
+    <div class="form-row" data-gray-group="rds-static">
       <label>RDSポート番号</label>
       <input type="number" id="nmos-rds-port" min="0" max="65535" value="{{ config.nmos.rds_static.port }}">
     </div>
-    <div class="form-row">
-      <label>APIバージョン</label>
+    <div class="form-row" data-gray-group="rds-static">
+      <label>Registration APIバージョン</label>
       <select id="nmos-rds-version">
         <option value="v1.1" {% if config.nmos.rds_static.api_version == "v1.1" %}selected{% endif %}>v1.1</option>
         <option value="v1.2" {% if config.nmos.rds_static.api_version == "v1.2" %}selected{% endif %}>v1.2</option>
         <option value="v1.3" {% if config.nmos.rds_static.api_version == "v1.3" %}selected{% endif %}>v1.3</option>
       </select>
     </div>
-    <div class="form-row">
-      <label>共通待受ポート</label>
-      <input type="number" id="nmos-common-port" min="0" max="65535" value="{{ config.nmos.common_port }}">
+    <div class="help-text" id="nmos-rds-static-hint" hidden>
+      RDS登録方式が「自動」のため、上記3項目は使用されません（mDNSで発見したRDSの情報を使用します）
     </div>
-    <div class="help-text">channelmapping / connection / events / node の待ち受けポート番号</div>
     <div class="form-row">
       <label>送信元ポート</label>
       <select id="nmos-source-port-mode">
@@ -55,10 +55,20 @@
         <option value="manual" {% if config.nmos.source_port_mode == "manual" %}selected{% endif %}>手動</option>
       </select>
     </div>
-    <div class="form-row">
+    <div class="form-row" data-gray-group="source-port-number">
       <label>送信元ポート番号</label>
       <input type="number" id="nmos-source-port" min="0" max="65535" value="{{ config.nmos.source_port or '' }}">
     </div>
+
+    <div class="panel-section">
+      <div class="panel-section-title">connection, nodeなどのAPIポート待ち受け番号（共通）</div>
+      <div class="form-row">
+        <label>ポート番号</label>
+        <input type="number" id="nmos-common-port" min="0" max="65535" value="{{ config.nmos.common_port }}">
+      </div>
+      <div class="help-text">channelmapping / connection / events / node の待ち受けポート番号</div>
+    </div>
+
     <button class="btn btn-small" id="nmos-save">保存</button>
     <span class="save-status" id="nmos-status"></span>
   </div>

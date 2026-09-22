@@ -86,6 +86,7 @@ async function saveNmos() {
       status.textContent = "保存失敗: " + (body.detail || res.status);
       status.classList.add("err");
       restoreFields(nmosSnapshot);
+      updateNmosFieldStates();
       return;
     }
     status.textContent = "保存しました";
@@ -95,6 +96,7 @@ async function saveNmos() {
     status.textContent = "保存失敗: " + e;
     status.classList.add("err");
     restoreFields(nmosSnapshot);
+    updateNmosFieldStates();
   }
 }
 
@@ -150,11 +152,32 @@ async function refreshNmosStatus() {
   }
 }
 
+// Dims (but does not disable) fields that the current RDS登録方式/送信元ポート
+// selection means are not actually used -- the operator's value is kept
+// editable and preserved for when they switch back, only the styling
+// signals it is currently inactive.
+function updateNmosFieldStates() {
+  const rdsIsAuto = document.getElementById("nmos-rds-discovery").value === "auto";
+  document.querySelectorAll('[data-gray-group="rds-static"]').forEach((row) => {
+    row.classList.toggle("field-inactive", rdsIsAuto);
+  });
+  document.getElementById("nmos-rds-static-hint").hidden = !rdsIsAuto;
+
+  const sourcePortIsAuto = document.getElementById("nmos-source-port-mode").value === "auto";
+  document.querySelectorAll('[data-gray-group="source-port-number"]').forEach((row) => {
+    row.classList.toggle("field-inactive", sourcePortIsAuto);
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   ptpSnapshot = snapshotFields(PTP_FIELDS);
   nmosSnapshot = snapshotFields(NMOS_FIELDS);
   document.getElementById("ptp-save").addEventListener("click", savePtp);
   document.getElementById("nmos-save").addEventListener("click", saveNmos);
+
+  document.getElementById("nmos-rds-discovery").addEventListener("change", updateNmosFieldStates);
+  document.getElementById("nmos-source-port-mode").addEventListener("change", updateNmosFieldStates);
+  updateNmosFieldStates();
 
   refreshNmosStatus();
   setInterval(refreshNmosStatus, 5000);

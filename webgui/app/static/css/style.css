@@ -192,6 +192,29 @@ h2 { font-size: 1rem; margin: 0 0 0.6rem; color: var(--text-dim); text-transform
 .endpoint-group-title { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 0.3rem; }
 .endpoint-fields { display: grid; grid-template-columns: 1fr 1fr 80px; gap: 0.3rem; }
 
+/* Visually groups related fields within a panel (e.g. "RDS登録" vs the
+   shared API port), distinct from .endpoint-group which is specifically
+   for the Amber/Blue transport endpoint fields on the media page. */
+.panel-section {
+  border-top: 1px solid var(--border);
+  margin-top: 0.8rem;
+  padding-top: 0.6rem;
+}
+.panel-section-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.5rem;
+}
+
+/* A field that is currently not in effect (e.g. the static RDS
+   address/port while RDS discovery is set to "auto") -- dimmed to signal
+   it is inactive, but deliberately left editable, not disabled, so the
+   operator's value is preserved for when they switch back. */
+.form-row.field-inactive { opacity: 0.45; }
+
 input[type=text], input[type=number], select {
   width: 100%;
   background: var(--bg-input);
