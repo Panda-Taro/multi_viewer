@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from .. import config_store, log_store
+from ..nmos import connection_api as nmos_connection_api
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
@@ -113,6 +114,13 @@ def update_video_receiver(index: int, update: VideoReceiverUpdate):
         # old value) simply needs to surface this error, not revert.
         raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
 
+    # This write bypassed the IS-05 activate path, so any cached `staged`
+    # value for this receiver is now stale relative to config.json --
+    # drop it so the next NMOS GET/PATCH/activate re-reads the value just
+    # saved here instead of silently reverting it. See connection_api.py's
+    # module docstring and NOTES.md for the bug this closes.
+    nmos_connection_api.invalidate_staged_for("video", idx)
+
     log_store.log_event("webgui", "info", f"映像Receiver{index}の設定を更新しました")
     return {"status": "ok", "receiver": receivers[idx]}
 
@@ -142,6 +150,8 @@ def update_audio_receiver(index: int, update: AudioReceiverUpdate):
         config_store.save_config(config)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"設定の保存に失敗しました: {exc}") from exc
+
+    nmos_connection_api.invalidate_staged_for("audio", idx)
 
     log_store.log_event("webgui", "info", f"音声Receiver{index}の設定を更新しました")
     return {"status": "ok", "receiver": receivers[idx]}

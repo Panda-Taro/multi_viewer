@@ -12,6 +12,18 @@ transport params into config.json and marks the receiver's `sdp_source` as
 "nmos" (requirement 4.8.4.2.1.3 -- the WebGUI reflects this in real time by
 polling the same config).
 
+Because `staged` is a cache seeded from config.json only on first access,
+anything that writes a receiver's config.json fields through a path other
+than this module's own `_activate()` (currently: media.py's manual-save
+endpoints) MUST call `invalidate_staged()`/`invalidate_staged_for()`
+afterwards. Otherwise a later activate_immediate that doesn't itself
+change any value (e.g. a controller's periodic re-sync) would silently
+overwrite that other write with the stale cached staged values -- this
+was a real bug (see NOTES.md "config.jsonをsource of truthとして保つ"),
+and the invariant this module now maintains is: config.json's `enabled`
+and endpoint fields are always the source of truth; staged/active exist to
+reflect and stage changes to it, never to silently regress it.
+
 Only `activate_immediate` is supported; scheduled activation
 (`activate_scheduled_absolute`/`_relative`) is rejected with 400 -- no
 external controller behaviour in this NMOS-Testing-Tool-free environment
@@ -101,6 +113,39 @@ def reset_staged_cache() -> None:
     """Test hook: clears the in-memory staged state between test cases."""
     with _staged_lock:
         _staged.clear()
+
+
+def invalidate_staged(receiver_id: str) -> None:
+    """Drops the cached `staged` value for one receiver, if any, so the
+    next GET/PATCH re-initializes it from the current config.json.
+
+    Must be called by anything that writes a receiver's config.json fields
+    *outside* the IS-05 activate path (currently: media.py's manual-save
+    endpoints) -- otherwise a stale in-memory `staged` can silently
+    overwrite that write on a later activate_immediate that doesn't itself
+    change any value (e.g. a controller's periodic re-sync). See NOTES.md
+    "config.jsonをsource of truthとして保つ" for the bug this fixes and
+    why a targeted invalidation was chosen over redesigning staged to
+    merge live config on every read.
+    """
+    with _staged_lock:
+        _staged.pop(receiver_id, None)
+
+
+def invalidate_staged_for(kind: str, index: int) -> None:
+    """Convenience wrapper for callers (media.py) that only know a
+    receiver by its config.json position (0-based `index` within
+    `receivers.video` or `receivers.audio`), not its NMOS UUID."""
+    identity = identity_module.load_identity()
+    ids_by_kind = {
+        "video": identity["video_receiver_ids"],
+        "audio": identity["audio_receiver_ids"],
+    }
+    try:
+        receiver_id = ids_by_kind[kind][index]
+    except (KeyError, IndexError):
+        return
+    invalidate_staged(receiver_id)
 
 
 @router.get("/x-nmos/connection/")

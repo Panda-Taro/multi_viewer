@@ -310,3 +310,70 @@ Global/eth0とも`no`（systemd-resolvedのmDNSも無効）。**この時点で�
   IPv4/IPv6両方を広報するRDSに対しては意図通りIPv4が選ばれるが、**IPv4を広報しない
   （IPv6のみの）RDS環境は未検証**（この要件定義書のシステムがIPv4前提の設計である
   ため、優先度は低いと判断し深追いしなかった）。
+
+---
+
+# ステップ2d: `staged`キャッシュ不整合バグの修正
+
+## バグの内容（依頼のコードレビューで指摘）
+
+`webgui/app/nmos/connection_api.py`の`_staged`（Receiverごとの`staged`リソースの
+インメモリキャッシュ）は`_get_or_init_staged()`で初回アクセス時のみconfig.jsonから
+初期化され、以後はプロセス終了までメモリ上の値を使い続ける設計だった。一方、
+`webgui/app/routers/media.py`のWebGUI手動保存API（`PUT /api/media/video/{index}`・
+`/audio/{index}`）はconfig.jsonのみを更新し、`_staged`キャッシュには一切反映
+していなかった。
+
+このため「NMOSがactivate → オペレーターがWebGUIで手動変更 → NMOSコントローラが
+値を変えずに`activation: activate_immediate`だけを再送信（フィールドを省略した
+再同期パターン）」という現実的なシーケンスで、`_activate()`が古いキャッシュの
+`master_enable`等を使ってconfig.jsonを上書きし、**オペレーターの手動変更が本人の
+知らないところで取り消される**バグがあった。
+
+## 採用した設計: ターゲット無効化（キャッシュ invalidation）
+
+依頼で提示された2方針（(1) 特定Receiverのstagedキャッシュだけを無効化する関数を
+追加、(2) stagedをconfig.jsonからの都度マージ方式に再設計）のうち、**(1)の
+ターゲット無効化を採用した**。理由:
+
+- IS-05のstaged/activeの意味論（stagedはコントローラの「未確定の編集途中」を
+  保持するためのバッファであり、activeと常に同期している必要はない）を壊さずに
+  済む。(2)の「未PATCHフィールドは都度config.jsonから補完する」設計は、
+  「どのフィールドがコントローラによって明示的にPATCH済みで、どれがまだ未編集か」
+  を継続的に追跡する必要があり、実装・テストのコストに見合う追加の正しさを
+  今回のバグには必要としなかった
+- 依頼文が挙げていた実装例（「特定のreceiver_idのstagedキャッシュだけを破棄する
+  関数」）をそのまま採用すれば、要求されているゴール（「config.jsonの`enabled`・
+  エンドポイント値が常にsource of truthである」）を過不足なく満たせると判断した
+- config.jsonの受信機設定を書き込むのは現状`media.py`（WebGUI手動保存）と
+  `connection_api.py`の`_activate()`自身（NMOS経由、これは自分のキャッシュと
+  一貫性があるため無効化不要）の2箇所のみであり、無効化を呼ぶべき箇所を
+  取りこぼすリスクは低いと判断した（将来MTLブリッジ等が新たにconfig.jsonの
+  受信機設定を書き込むようになった場合は、そこにも同様の呼び出しが必要になる。
+  `connection_api.py`のモジュールdocstringにこの注意点を明記した）
+
+## 実装
+
+- `connection_api.py`に`invalidate_staged(receiver_id)`（低レベル、1件だけ破棄）と
+  `invalidate_staged_for(kind, index)`（`media.py`が持っているreceiverの位置情報から
+  IDを解決して呼び出す便利関数）を追加。既存の`reset_staged_cache()`（全件クリア、
+  テスト用）とは別物とし、他のReceiverの正当な編集中stagedを巻き込まないようにした
+- `media.py`の2つの手動保存エンドポイントで、`config_store.save_config()`成功後に
+  対応する`invalidate_staged_for()`を呼ぶよう変更
+
+## 副次的な判断: NMOSの未確定編集より手動保存を優先する
+
+もしNMOSコントローラがReceiverのstagedを編集中（PATCHしたがまだactivateしていない）
+の最中に、オペレーターが同じReceiverをWebGUIから手動保存した場合、この修正により
+その未確定の編集はキャッシュごと破棄される（次回のGET/PATCH staged は手動保存後の
+config.jsonから再初期化される）。恒久化されていない、コントローラ側のin-flightな
+編集より、物理コンソールでの人間による明示的な操作を優先する方が安全だと判断し、
+意図的な挙動とした。
+
+## 回帰テストの検証方法
+
+追加した回帰テスト（`webgui/tests/test_nmos_media_staged_sync.py`）が実際にこの
+バグを検出できることを、修正コードを一時的に無効化して確認した
+（`media.py`の`invalidate_staged_for`呼び出しをコメントアウトして再実行したところ、
+5件中4件が実際に失敗することを確認し、その後修正を元に戻した）。単に「テストが
+通る」だけでなく、「テストが正しくこのバグを再現・検出できる」ことまで検証済み。

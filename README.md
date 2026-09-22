@@ -5,7 +5,8 @@ ST2110-20/-30 の受信・4分割合成・WebRTC配信・NMOS制御・WebGUI を
 要件定義書（`MultiViewer要件定義書.pdf`、ローカル保管・本リポジトリには含めない）に基づき、
 5ステップに分けて段階的に実装する。**本リポジトリの現在の内容はステップ1（WebGUIの表面と
 OSネットワーク設定機能）＋ステップ2a（NMOS IS-04/IS-05、静的登録）＋ステップ2b（NMOSの
-mDNS＆DNS-SD自動発見、静的登録との切替）**。
+mDNS＆DNS-SD自動発見、静的登録との切替）＋ステップ2d（staged/config.json不整合バグの
+修正）**。
 PTP同期/映像・音声の実受信（MTL）/合成・配信（FFmpeg・MediaMTX）は未実装。
 
 ## ステップ1のスコープ（完了）
@@ -67,6 +68,20 @@ mDNSは環境依存の不具合が出やすいため、依頼者の指示によ�
   既存NMOS状態表示にも発見方式を追加した。`static`⇔`auto`切替は、登録ループが
   設定を毎周期（ハートビート中は最大5秒間隔）再読込する既存の仕組みにより自動的に
   反映される（追加の実装は不要だった）
+
+## ステップ2dのスコープ（今回・完了）: `staged`キャッシュ不整合バグの修正
+
+コードレビューで発見されたバグの修正。IS-05の`staged`はconnection_api.py内で
+Receiverごとにインメモリキャッシュされるが、WebGUIからの手動保存
+（`PUT /api/media/video|audio/{index}`）はconfig.jsonのみを更新しキャッシュには
+反映していなかった。このため「NMOSがactivate→オペレーターが手動変更→NMOS
+コントローラが値を変えずに`activate_immediate`だけを再送信（再同期）」という
+シーケンスで、古いキャッシュがオペレーターの変更を意図せず上書きすることがあった。
+
+修正: `media.py`の手動保存後に、該当Receiverの`staged`キャッシュだけを破棄する
+`connection_api.invalidate_staged_for()`を呼ぶようにした。次回のGET/PATCH/activate
+は必ず最新のconfig.jsonから再初期化される。「config.jsonの`enabled`・エンドポイント
+値が常にsource of truthである」という不変条件を回復した（判断根拠はNOTES.md）。
 
 やらないこと（後続ステップ）:
 
@@ -162,8 +177,9 @@ NMOS機能（IS-04 Registrationクライアント＋IS-05 Connection API）は�
 - 起動時（および5秒ごとのループ内）に`config.json`の`nmos`セクションを再読込するため、
   WebGUIから`rds_static`やポートを変更しても、NMOSサービスを再起動せず追従する
   （`common_port`自体の変更を除く。上記アーキテクチャ節参照）
-- `rds_discovery`が`"static"`以外（つまり`"auto"`＝mDNS）の場合は、ダッシュボードに
-  「無効（mDNS自動発見は未実装）」と表示するだけで、実際の登録動作は行わない
+- `rds_discovery`が`"auto"`の場合はmDNS発見を使う（ステップ2bで実装済み。詳細は
+  下記「mDNS discovery」章）。`"static"`/`"auto"`以外の値が設定された場合のみ
+  「無効」表示になる
 - 登録順序: Node → Device → 映像Receiver×4 → 音声Receiver×1（`POST /x-nmos/registration/
   {version}/resource`）。成功後、5秒間隔で`POST .../health/nodes/{node_id}`を送信し続ける
 - ハートビートが404（RDSがこのNodeを認識していない＝RDSの再起動等で登録が失われた）を
@@ -200,6 +216,13 @@ config.jsonへ反映する（`enabled`＝`master_enable`、`amber`/`blue`＝`tra
 
 **スケジュール起動（`activate_scheduled_absolute`/`_relative`）は未対応（400エラー）**。
 `activate_immediate`のみサポートする。
+
+**`config.json`の`enabled`・エンドポイント値が常にsource of truth**という不変条件を
+維持している。`staged`はReceiverごとにインメモリキャッシュされるが、WebGUIの手動保存
+（`media.py`）がconfig.jsonを書き換えた際は、そのReceiverのキャッシュを破棄する
+（`connection_api.invalidate_staged_for()`）ことで、古いキャッシュが後続の
+（値を変えない）再activateで手動変更を上書きしてしまう不具合を防いでいる
+（ステップ2dで修正。詳細な経緯・検証方法はNOTES.md参照）。
 
 ### `/x-nmos/`ルート: channelmapping/connection/events/node の4API構成
 
@@ -466,10 +489,11 @@ pip install -r requirements.txt pytest httpx pytest-asyncio
 pytest -q
 ```
 
-103件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
+108件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
 WebGUIの各画面とAPI・NMOS（IS-04リソース生成/Registrationクライアント/Node API/
 IS-05 Connection API/IS-07・IS-08スタブ/自作モックRDSとの結合テスト/mDNS発見の
-パース・優先度選択・フェイルオーバー・`auto`モード統合ロジック）を検証している。
+パース・優先度選択・フェイルオーバー・`auto`モード統合ロジック/`staged`キャッシュ
+無効化の回帰テスト）を検証している。
 UIのブラウザでの目視確認は `uvicorn app.main:app` をローカルで起動して行った
 （Windows開発機のため `ip`/`netplan`/`psutil` 等OS依存機能は自動的にNo-op/N-A表示に
 フォールバックする設計）。
