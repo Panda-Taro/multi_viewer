@@ -34,6 +34,14 @@ _DEFAULT_VIDEO_RECEIVER = {
     "blue": dict(_DEFAULT_ENDPOINT),
     "sdp_source": "manual",  # "manual" | "nmos"
     "nmos_sdp": None,
+    # The IS-05 sender_id the controller last staged for this receiver
+    # (None if never set, or if manually cleared). Persisted so the IS-04
+    # Receiver resource's `subscription.sender_id` -- and the IS-05
+    # `active.sender_id` -- reflect what this receiver is actually
+    # subscribed to, instead of a hardcoded placeholder. See
+    # nmos/resources.py's _receiver_common() and NOTES.md "subscription
+    # の動的化・RDSへの再登録".
+    "sender_id": None,
 }
 
 _DEFAULT_AUDIO_RECEIVER = {
@@ -45,6 +53,7 @@ _DEFAULT_AUDIO_RECEIVER = {
     "blue": dict(_DEFAULT_ENDPOINT),
     "sdp_source": "manual",
     "nmos_sdp": None,
+    "sender_id": None,
 }
 
 _DEFAULT_NIC = {"interface": "", "mode": "static", "address": "", "prefix": 24, "gateway": ""}

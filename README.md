@@ -5,9 +5,9 @@ ST2110-20/-30 の受信・4分割合成・WebRTC配信・NMOS制御・WebGUI を
 要件定義書（`MultiViewer要件定義書.pdf`、ローカル保管・本リポジトリには含めない）に基づき、
 5ステップに分けて段階的に実装する。**本リポジトリの現在の内容はステップ1（WebGUIの表面と
 OSネットワーク設定機能）＋ステップ2a（NMOS IS-04/IS-05、静的登録）＋ステップ2b（NMOSの
-mDNS＆DNS-SD自動発見、静的登録との切替）＋ステップ2d〜2g（NMOS関連の不具合修正・
-仕様変更4件: staged/config.json不整合、URL末尾スラッシュ不一致、activate時の
-フォーマット表示、「SDP」選択肢の廃止）**。
+mDNS＆DNS-SD自動発見、静的登録との切替）＋ステップ2d〜2h（NMOS関連の不具合修正・
+仕様変更5件: staged/config.json不整合、URL末尾スラッシュ不一致、activate時の
+フォーマット表示、「SDP」選択肢の廃止、subscription動的化・RDSへの再登録）**。
 PTP同期/映像・音声の実受信（MTL）/合成・配信（FFmpeg・MediaMTX）は未実装。
 
 ## ステップ1のスコープ（完了）
@@ -113,6 +113,30 @@ SDPが実際に示す値（`a=fmtp`の`interlace`キーワード→59.94i/59.94p
 （`nmos/sdp.py`のパーサー拡張、`nmos/connection_api.py`の
 `_resolve_video_format()`/`_resolve_packet_time()`。サンプリングは本システムが
 48kHz以外を実質サポートしないため常に固定表示。詳細な判断根拠はNOTES.md）。
+
+## ステップ2hのスコープ（今回・完了）: subscriptionの動的化・RDSへの再登録
+
+依頼「本システムで手動変更しても、他システムのNMOSコントローラのGUIが更新されない」
+の原因調査・修正。原因は2点あった:
+
+1. **IS-04で登録するReceiverリソースの`subscription`が`{"sender_id": None,
+   "active": False}`で常に固定**、config.jsonの実際の状態を反映していなかった
+2. **初回登録後、RDSへの再登録（再POST）が一切行われない**。通常運用中は
+   ハートビート（リソースデータを含まない生存確認のみ）しか送っておらず、
+   config.jsonの変更がRDSへ通知される経路自体が存在しなかった
+
+修正:
+- `resources.py`の`subscription`を、config.jsonの`enabled`・新規追加した
+  `sender_id`フィールド（IS-05でコントローラが`staged`にセットした値を永続化）
+  から動的に構築するよう変更。IS-05の`active.sender_id`も同様に常時`None`
+  だったバグを修正
+- `registration_client.py`のハートビートループに、config.json全体を前回登録時と
+  比較し、変化していれば`register_all()`を再実行する変更検知ロジックを追加
+- 手動保存時（`media.py`）に`nmos_sdp`/`sender_id`をクリアするよう変更
+  （手動保存は以前のNMOS制御内容を完全に上書きするため、副次的に必要と判断）
+
+詳細な設計判断（config全体比較を採用した理由、発見した別の潜在バグの修正等）は
+NOTES.md参照。
 
 やらないこと（後続ステップ）:
 
@@ -538,13 +562,14 @@ pip install -r requirements.txt pytest httpx pytest-asyncio
 pytest -q
 ```
 
-131件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
+136件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
 WebGUIの各画面とAPI・NMOS（IS-04リソース生成/Registrationクライアント/Node API/
 IS-05 Connection API/IS-07・IS-08スタブ/自作モックRDSとの結合テスト/mDNS発見の
 パース・優先度選択・フェイルオーバー・`auto`モード統合ロジック/`staged`キャッシュ
 無効化の回帰テスト/末尾スラッシュ有無どちらでも直接応答することの回帰テスト/
 NMOS activate時にSDPの実値（interlace・ptime）が反映される回帰テスト/
-手動保存APIが「SDP」を拒否することの確認）を検証している。
+手動保存APIが「SDP」を拒否することの確認/subscriptionの動的化・設定変更検知に
+よるRDSへの再登録の回帰テスト）を検証している。
 UIのブラウザでの目視確認は `uvicorn app.main:app` をローカルで起動して行った
 （Windows開発機のため `ip`/`netplan`/`psutil` 等OS依存機能は自動的にNo-op/N-A表示に
 フォールバックする設計）。

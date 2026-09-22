@@ -153,6 +153,19 @@ async def run_forever(
             continue
 
         identity = identity_module.load_identity()
+        # Re-read after identity resolution: on a first-ever run,
+        # load_identity() just generated and persisted fresh UUIDs, which
+        # the `config` snapshot captured above (from before that write)
+        # would not reflect. Registering with a stale `config` here isn't
+        # itself wrong (resources.py takes `identity` as its own
+        # parameter and never reads config["identity"]), but this exact
+        # `config` object is also used as _heartbeat_loop()'s baseline for
+        # detecting "has anything changed since we last registered" --
+        # and comparing against a config known to be already-stale would
+        # make it spuriously think something changed on the very next
+        # heartbeat tick, forcing an unnecessary re-registration every
+        # single time.
+        config = config_store.load_config()
         status_store.write_status(registration_status="registering", discovery_mode=discovery_mode, rds_url=base_url)
 
         async with client_factory(timeout=5.0) as client:
@@ -175,7 +188,8 @@ async def run_forever(
             failed_name = await _heartbeat_loop(
                 client,
                 base_url,
-                identity["node_id"],
+                identity,
+                config,
                 target_changed,
                 sleep,
                 registry_name=selected_registry_name if discovery_mode == "auto" else None,
@@ -252,7 +266,8 @@ def _auto_target_changed() -> Callable[[dict], bool]:
 async def _heartbeat_loop(
     client: httpx.AsyncClient,
     base_url: str,
-    node_id: str,
+    identity: dict,
+    registered_config: dict,
     target_changed: Callable[[dict], bool],
     sleep: Callable,
     registry_name: Optional[str] = None,
@@ -260,12 +275,21 @@ async def _heartbeat_loop(
     """Sends heartbeats until one fails, the RDS forgets us, or the
     operator changes the discovery target in the WebGUI -- any of which
     returns control to run_forever() so it re-evaluates config from
-    scratch. Returns `registry_name` if a heartbeat genuinely failed
-    (network error or the RDS forgetting us) -- the signal run_forever()
-    uses, in "auto" mode, to exclude this registry from the very next
+    scratch. Returns `registry_name` if a heartbeat (or a re-registration,
+    see below) genuinely failed -- the signal run_forever() uses, in
+    "auto" mode, to exclude this registry from the very next
     discovery/selection attempt (the failover path). Returns None on a
     clean exit (operator switched discovery target) or when not running
-    in "auto" mode (registry_name left as None by the caller)."""
+    in "auto" mode (registry_name left as None by the caller).
+
+    Also re-registers (re-POSTs Node/Device/Receivers) whenever
+    config.json has changed since the last registration -- otherwise the
+    RDS keeps serving a frozen snapshot from whenever this session first
+    registered, since a heartbeat carries no resource data at all. This
+    was a real bug: neither a manual WebGUI save nor an IS-05 activate
+    ever reached external NMOS controllers watching this Node/Receiver
+    through the RDS, because nothing here ever told the RDS anything had
+    changed (see NOTES.md "subscription の動的化・RDSへの再登録")."""
     while True:
         await sleep(HEARTBEAT_INTERVAL_SECONDS)
 
@@ -273,8 +297,22 @@ async def _heartbeat_loop(
         if target_changed(current_cfg):
             return None  # target changed; let run_forever() pick up the new config
 
+        if current_cfg != registered_config:
+            try:
+                await register_all(client, base_url, current_cfg, identity)
+            except Exception as exc:  # noqa: BLE001
+                detail = _describe_exception(exc)
+                status_store.write_status(registration_status="error", last_error=detail)
+                log_store.log_event("nmos", "warning", f"変更検知後の再登録に失敗しました: {detail}")
+                return registry_name
+            registered_config = current_cfg
+            status_store.write_status(
+                registration_status="registered", last_registered_at=_now_iso(), last_error=None
+            )
+            log_store.log_event("nmos", "info", "設定変更を検知しRDSへ再登録しました")
+
         try:
-            accepted = await send_heartbeat(client, base_url, node_id)
+            accepted = await send_heartbeat(client, base_url, identity["node_id"])
         except Exception as exc:  # noqa: BLE001
             detail = _describe_exception(exc)
             status_store.write_status(registration_status="error", last_error=detail)

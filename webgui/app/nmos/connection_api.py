@@ -104,7 +104,7 @@ def _leg_from_config(endpoint: dict, enabled: bool) -> dict:
 def _active_from_config(receiver_cfg: dict) -> dict:
     has_sdp = bool(receiver_cfg.get("nmos_sdp"))
     return {
-        "sender_id": None,
+        "sender_id": receiver_cfg.get("sender_id"),
         "master_enable": receiver_cfg["enabled"],
         "activation": {"mode": None, "requested_time": None, "activation_time": None},
         "transport_file": {
@@ -345,6 +345,7 @@ def _activate(kind: str, index: int, receiver_id: str, staged: dict) -> None:
         receiver_cfg["payload_id"] = payload_type
     receiver_cfg["sdp_source"] = "nmos"
     receiver_cfg["nmos_sdp"] = sdp_text
+    receiver_cfg["sender_id"] = staged.get("sender_id")
 
     # A controller that only PATCHes bare transport_params (no SDP text)
     # has no format info for us to derive -- first_leg is None in that

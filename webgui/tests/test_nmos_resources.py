@@ -99,6 +99,46 @@ def test_build_all_receivers_returns_4_video_1_audio(isolated_dirs):
     assert video[0]["caps"]["media_types"] == ["video/raw"]
 
 
+def test_receiver_subscription_reflects_disabled_state_by_default(isolated_dirs):
+    """Regression test: an earlier revision hardcoded subscription to
+    {"sender_id": None, "active": False} regardless of the receiver's
+    actual state, so external NMOS controllers watching this Receiver via
+    the RDS never saw it change. A freshly-created (disabled) receiver
+    should show active=False -- this alone doesn't prove it's dynamic,
+    see the next test for that."""
+    from app import config_store
+    from app.nmos import identity as identity_module
+    from app.nmos import resources
+
+    config = config_store.load_config()
+    identity = identity_module.ensure_identity(config)["identity"]
+
+    video = resources.build_video_receiver(0, config, identity)
+    assert video["subscription"] == {"sender_id": None, "active": False}
+
+
+def test_receiver_subscription_reflects_enabled_state_and_sender_id(isolated_dirs):
+    from app import config_store
+    from app.nmos import identity as identity_module
+    from app.nmos import resources
+
+    config = config_store.load_config()
+    identity = identity_module.ensure_identity(config)["identity"]
+
+    config["receivers"]["video"][0]["enabled"] = True
+    config["receivers"]["video"][0]["sender_id"] = "773372d9-b6e1-45d0-9b7a-593ae4317a0d"
+    config["receivers"]["audio"][0]["enabled"] = False
+
+    video = resources.build_video_receiver(0, config, identity)
+    audio = resources.build_audio_receiver(0, config, identity)
+
+    assert video["subscription"] == {
+        "sender_id": "773372d9-b6e1-45d0-9b7a-593ae4317a0d",
+        "active": True,
+    }
+    assert audio["subscription"] == {"sender_id": None, "active": False}
+
+
 def test_receiver_ids_match_identity_order(isolated_dirs):
     from app import config_store
     from app.nmos import identity as identity_module

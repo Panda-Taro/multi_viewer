@@ -185,3 +185,36 @@ def test_nmos_then_manual_save_round_trip_video(combined_client):
     receiver = combined_client.config_store.load_config()["receivers"]["video"][0]
     assert receiver["video_format"] == "59.94p"
     assert receiver["sdp_source"] == "manual"
+
+
+def test_manual_save_clears_nmos_sdp_and_sender_id(combined_client):
+    """A manual save fully supersedes whatever NMOS last set -- leftover
+    nmos_sdp/sender_id would misrepresent this receiver as still
+    subscribed to a Sender it may no longer resemble at all (they would
+    also leak into the IS-04 Receiver resource's subscription field via
+    resources.py, showing a stale sender_id to external controllers)."""
+    video_path = f"/x-nmos/connection/v1.1/single/receivers/{combined_client.video_id}/staged/"
+
+    sdp_text = (
+        "v=0\r\no=- 1 1 IN IP4 192.168.10.1\r\ns=Video Sender\r\nt=0 0\r\n"
+        "m=video 5004 RTP/AVP 96\r\nc=IN IP4 239.5.5.5/32\r\n"
+        "a=source-filter: incl IN IP4 239.5.5.5 192.168.10.9\r\n"
+    )
+    combined_client.patch(
+        video_path,
+        json={
+            "master_enable": True,
+            "sender_id": "773372d9-b6e1-45d0-9b7a-593ae4317a0d",
+            "transport_file": {"data": sdp_text, "type": "application/sdp"},
+            "activation": {"mode": "activate_immediate"},
+        },
+    )
+    receiver = combined_client.config_store.load_config()["receivers"]["video"][0]
+    assert receiver["nmos_sdp"] == sdp_text
+    assert receiver["sender_id"] == "773372d9-b6e1-45d0-9b7a-593ae4317a0d"
+
+    combined_client.put("/api/media/video/1", json=_manual_video_payload(True))
+
+    receiver = combined_client.config_store.load_config()["receivers"]["video"][0]
+    assert receiver["nmos_sdp"] is None
+    assert receiver["sender_id"] is None

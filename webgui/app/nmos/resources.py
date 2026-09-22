@@ -130,6 +130,7 @@ def _receiver_common(
     label: str,
     format_urn: str,
     media_type: str,
+    receiver_cfg: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "id": receiver_id,
@@ -144,7 +145,17 @@ def _receiver_common(
         # Two legs: index 0 = Amber (A系), index 1 = Blue (B系), matching
         # this system's ST2022-7 dual-NIC receive design.
         "interface_bindings": ["media_amber", "media_blue"],
-        "subscription": {"sender_id": None, "active": False},
+        # Reflects this receiver's actual state -- config.json's "enabled"
+        # and "sender_id" -- rather than a hardcoded "always inactive"
+        # placeholder. An earlier revision always sent
+        # {"sender_id": None, "active": False} here regardless of real
+        # state, which meant external NMOS controllers watching this
+        # Receiver via the RDS never saw it change (see NOTES.md
+        # "subscription の動的化・RDSへの再登録").
+        "subscription": {
+            "sender_id": receiver_cfg.get("sender_id"),
+            "active": bool(receiver_cfg.get("enabled")),
+        },
     }
 
 
@@ -152,7 +163,12 @@ def build_video_receiver(index: int, config: dict, identity: dict) -> dict[str, 
     receiver_id = identity["video_receiver_ids"][index]
     label = f"{NMOS_NODE_LABEL} Video Receiver {index + 1}"
     return _receiver_common(
-        receiver_id, identity["device_id"], label, "urn:x-nmos:format:video", VIDEO_MEDIA_TYPE
+        receiver_id,
+        identity["device_id"],
+        label,
+        "urn:x-nmos:format:video",
+        VIDEO_MEDIA_TYPE,
+        config["receivers"]["video"][index],
     )
 
 
@@ -160,7 +176,12 @@ def build_audio_receiver(index: int, config: dict, identity: dict) -> dict[str, 
     receiver_id = identity["audio_receiver_ids"][index]
     label = f"{NMOS_NODE_LABEL} Audio Receiver {index + 1}"
     return _receiver_common(
-        receiver_id, identity["device_id"], label, "urn:x-nmos:format:audio", AUDIO_MEDIA_TYPE
+        receiver_id,
+        identity["device_id"],
+        label,
+        "urn:x-nmos:format:audio",
+        AUDIO_MEDIA_TYPE,
+        config["receivers"]["audio"][index],
     )
 
 

@@ -104,6 +104,11 @@ def update_video_receiver(index: int, update: VideoReceiverUpdate):
         "amber": update.amber.model_dump(),
         "blue": update.blue.model_dump(),
         "sdp_source": "manual",
+        # A manual save fully supersedes whatever NMOS last set; leaving
+        # the old SDP/sender_id around would misrepresent this receiver as
+        # still subscribed to a Sender it may no longer resemble at all.
+        "nmos_sdp": None,
+        "sender_id": None,
     }
     try:
         config_store.save_config(config)
@@ -145,6 +150,8 @@ def update_audio_receiver(index: int, update: AudioReceiverUpdate):
         "amber": update.amber.model_dump(),
         "blue": update.blue.model_dump(),
         "sdp_source": "manual",
+        "nmos_sdp": None,
+        "sender_id": None,
     }
     try:
         config_store.save_config(config)

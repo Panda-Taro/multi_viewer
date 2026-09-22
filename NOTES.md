@@ -578,3 +578,90 @@ pytest 131件、全件パス確認済み。ステップ2fで追加したテス�
 矛盾するもの（「NMOS制御時は問答無用で"sdp"になる」ことを検証していたテスト）を
 実際の新仕様に合わせて書き換え、加えて「SDPに実データがある場合は実値へ更新」
 「SDPに情報が無い場合は既存の正規値を維持」の両方を検証する新規テストを追加した。
+
+---
+
+# ステップ2h: subscriptionの動的化・RDSへの再登録（他システムのNMOSコントローラに変更が反映されない不具合）
+
+## 依頼内容と事前調査
+
+依頼者から「本システムで手動でReceiverの内容を変更しても、他システムのNMOS
+コントローラのGUI上表示が更新されない。他の物理筐体では自動的に更新される」との
+報告があった。コード修正前にまず原因調査を実施し、以下2点を特定・報告した。
+
+## 原因1: IS-04で登録するReceiverリソースの`subscription`が常に固定値
+
+`nmos/resources.py`の`_receiver_common()`が
+`"subscription": {"sender_id": None, "active": False}`を無条件に返しており、
+`config`（実際のReceiver設定）を一切参照していなかった。RECEIVERが有効化されても、
+RDSに登録されているこの値自体は永久に変化しない。
+
+## 原因2: 初回登録後、RDSへの再登録（再POST）が一切行われない
+
+`nmos/registration_client.py`の`register_all()`（Node/Device/Receiverの内容を
+RDSへPOSTする処理）は、セッション開始時（初回登録・ハートビート失敗後の再接続時）
+のみ呼ばれる設計だった。通常運用中（ハートビートが継続している間）は
+`send_heartbeat()`（リソースデータを含まない「生存確認」のみのPOST）しか
+送っておらず、config.jsonがどれだけ変化しても、その差分がRDSへ一切通知
+されなかった。一般的なNMOS対応機器は状態変化のたびに自発的に再登録する
+（イベント駆動）が、本システムにはこの仕組みが無かった。
+
+## 修正
+
+### 原因1の修正: `subscription`の動的化
+
+- `config_store.py`のReceiverスキーマに`sender_id`フィールドを追加（デフォルト
+  `None`）。IS-05でコントローラが`staged`にセットした`sender_id`を
+  `connection_api.py`の`_activate()`で永続化するようにした
+  （`receiver_cfg["sender_id"] = staged.get("sender_id")`）
+- `connection_api.py`の`_active_from_config()`も、IS-05の`active.sender_id`を
+  ハードコードの`None`ではなくconfig.jsonの`sender_id`から読むよう修正
+  （IS-05のGET activeも実は同じ「常にNone」バグを抱えていた）
+- `resources.py`の`_receiver_common()`に`receiver_cfg`を渡すよう変更し、
+  `subscription`を`{"sender_id": receiver_cfg.get("sender_id"), "active":
+  bool(receiver_cfg.get("enabled"))}`と実際の状態から動的に構築するよう修正
+- 副次的な修正: `media.py`の手動保存時に`nmos_sdp`・`sender_id`を`None`へ
+  クリアするようにした。手動保存は以前のNMOS制御内容を完全に上書きする操作
+  であり、これらのフィールドを残したままだと、手動再設定後もRDS上の
+  `subscription.sender_id`が古いSenderを指し続けてしまい、今回の修正の意味が
+  半減するため（手動保存時のこの2フィールドのクリアは、依頼になかったが今回の
+  修正と一体で必要と判断し追加した）
+
+### 原因2の修正: 変更検知による再登録
+
+`registration_client.py`の`_heartbeat_loop()`に、ハートビート送信の直前に
+「前回登録時のconfig.jsonと現在のconfig.jsonを比較し、異なっていれば
+`register_all()`を再実行する」ロジックを追加した。
+
+- **比較粒度はconfig.json全体とした**（Receiver関連フィールドだけを厳密に
+  抽出して比較する、といった細かい差分検出は行わない）。理由:
+  実装がシンプルで確実（「関連フィールドの選定漏れ」というバグを生みにくい）。
+  NIC設定やPTPドメイン等、NMOSリソースの内容に影響しない変更でも再登録が
+  走ってしまうが、操作者による変更は高頻度ではなく、余分な再登録の
+  コスト（RDSへの数回の追加POST）は無視できると判断した
+- 再登録は「ハートビートに失敗した場合の再接続」とは別物として扱い、
+  ハートビートセッション自体は継続したまま（`auto`モードの再発見や
+  フェイルオーバーを伴わずに）差分だけをRDSへ反映する設計にした
+- 実装中に別のバグを発見: `run_forever()`で`config`を`identity`解決前に
+  読み込んでいたため、初回起動時（identityのUUIDが未生成の状態）は
+  `identity_module.load_identity()`がconfig.jsonへUUIDを書き込んだ直後に、
+  既に読み込み済みの古い`config`オブジェクトとディスク上の内容が食い違う
+  状態になっていた。今回の「config全体を比較する」変更でこの食い違いが
+  表面化し、初回ハートビート時に不要な再登録が走ってしまうテスト失敗を
+  引き起こした。`identity`解決後に`config`を再読込するよう順序を修正して解消
+
+## 検証
+
+修正前の状態を一時的に再現（該当ロジックをコメントアウト）し、新規回帰テスト
+`test_run_forever_reregisters_when_config_changes_mid_session`が実際に失敗
+（設定変更後もRDSへの再登録が発生しないこと＝register呼び出しが7回のまま
+14回に増えないこと）を確認してから修正を復元した。
+
+pytest 136件、全件パス確認済み。追加したテスト:
+- `resources.py`の`subscription`が実際のenabled/sender_idを反映することを
+  検証する2件
+- IS-05 activateで`sender_id`が永続化され、IS-04リソース・IS-05 activeの
+  両方に反映されることを検証する1件
+- 手動保存が`nmos_sdp`/`sender_id`をクリアすることを検証する1件
+- ハートビート継続中の設定変更が検知され、RDSへの再登録が実際に走ることを
+  検証する1件（上記の通り、修正無効化での失敗を確認済み）

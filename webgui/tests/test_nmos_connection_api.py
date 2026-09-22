@@ -374,3 +374,40 @@ def test_audio_receiver_activation(nmos_client):
     config = nmos_client.config_store.load_config()
     assert config["receivers"]["audio"][0]["enabled"] is True
     assert config["receivers"]["audio"][0]["amber"]["group_ip"] == "239.9.9.9"
+
+
+def test_activate_persists_sender_id(nmos_client):
+    """Regression test: sender_id staged by the controller must be
+    persisted, so both IS-04's subscription.sender_id and IS-05's
+    active.sender_id reflect what this receiver is actually subscribed
+    to, instead of a hardcoded None (see resources.py's _receiver_common
+    and NOTES.md)."""
+    patch = {
+        "master_enable": True,
+        "sender_id": "773372d9-b6e1-45d0-9b7a-593ae4317a0d",
+        "transport_params": [
+            {"source_ip": "192.168.10.1", "multicast_ip": "239.1.1.1", "destination_port": 5004},
+            {"source_ip": "192.168.20.1", "multicast_ip": "239.1.2.1", "destination_port": 5004},
+        ],
+        "activation": {"mode": "activate_immediate"},
+    }
+    nmos_client.patch(
+        f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/staged/", json=patch
+    )
+
+    config = nmos_client.config_store.load_config()
+    assert config["receivers"]["video"][0]["sender_id"] == "773372d9-b6e1-45d0-9b7a-593ae4317a0d"
+
+    active = nmos_client.get(
+        f"/x-nmos/connection/v1.1/single/receivers/{nmos_client.video_id}/active/"
+    ).json()
+    assert active["sender_id"] == "773372d9-b6e1-45d0-9b7a-593ae4317a0d"
+
+    from app.nmos import identity as identity_module, resources
+
+    identity = identity_module.load_identity()
+    node_receiver = resources.build_video_receiver(0, config, identity)
+    assert node_receiver["subscription"] == {
+        "sender_id": "773372d9-b6e1-45d0-9b7a-593ae4317a0d",
+        "active": True,
+    }

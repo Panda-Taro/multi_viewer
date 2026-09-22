@@ -173,6 +173,62 @@ async def test_run_forever_registers_and_heartbeats_then_stops(isolated_dirs):
     assert status["registration_status"] == "registered"
 
 
+@pytest.mark.asyncio
+async def test_run_forever_reregisters_when_config_changes_mid_session(isolated_dirs):
+    """Regression test for the reported bug: a manual WebGUI save (or an
+    IS-05 activate) while a session is healthily heartbeating must reach
+    the RDS as an updated resource -- otherwise external NMOS controllers
+    watching this Node/Receiver via the RDS never see the change, even
+    though our own status shows "registered" the whole time. Before the
+    fix, only send_heartbeat() (no resource data) was called between the
+    initial registration and a reconnect."""
+    from app import config_store
+    from app.nmos import registration_client, status_store
+
+    config = config_store.load_config()
+    config["nmos"]["rds_discovery"] = "static"
+    config["nmos"]["rds_static"] = {"address": "rds.example", "port": 8010, "api_version": "v1.3"}
+    config_store.save_config(config)
+
+    call_log: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/resource" in request.url.path:
+            call_log.append("register")
+            return httpx.Response(200, json={})
+        if "/health/" in request.url.path:
+            call_log.append("heartbeat")
+            return httpx.Response(200, json={})
+        return httpx.Response(404)
+
+    def client_factory(**kwargs):
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler), **kwargs)
+
+    sleep_calls = {"count": 0}
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls["count"] += 1
+        if sleep_calls["count"] == 2:
+            # Simulate a manual WebGUI save landing between heartbeat ticks.
+            cfg = config_store.load_config()
+            cfg["receivers"]["video"][0]["enabled"] = True
+            config_store.save_config(cfg)
+        elif sleep_calls["count"] >= 3:
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await registration_client.run_forever(client_factory=client_factory, sleep=fake_sleep)
+
+    # 7 for the initial registration, then 7 more once the config change
+    # was detected -- not just a bare heartbeat.
+    assert call_log.count("register") == 14
+    assert call_log.count("heartbeat") == 2
+
+    status = status_store.read_status()
+    assert status["registration_status"] == "registered"
+    assert status["last_error"] is None
+
+
 def _fake_registry(name, host, port, pri, module):
     return module.mdns_discovery.DiscoveredRegistry(
         name=name,
