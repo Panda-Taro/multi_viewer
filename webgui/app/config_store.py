@@ -102,7 +102,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "audio": [dict(_DEFAULT_AUDIO_RECEIVER) for _ in range(1)],
     },
     "ptp": {
-        "domain": 0,
+        # ST 2059-2's own default domain (requirement 6.4.2). Only used
+        # for a brand-new config.json; _deep_merge() means an existing
+        # on-disk config keeps whatever domain it already had (including
+        # the old default of 0 from before step 3a) -- this only changes
+        # what a fresh install starts with.
+        "domain": 127,
     },
     "nmos": {
         "rds_discovery": "static",  # "static" | "auto"
