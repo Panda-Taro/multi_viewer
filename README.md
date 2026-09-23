@@ -180,6 +180,73 @@ NOTES.md参照。
 - SDPからの解像度・フレームレート・ビット深度・colorimetryのパース（ステップ4で
   MTL連携の要件が固まってから対応）
 
+## ステップ3aのスコープ（今回・ステージ1完了、ステージ2は未着手）: PTP同期の基盤確立＋ダッシュボード表示
+
+要件定義書改訂（PTPをMTL内蔵クライアントではなくlinuxptp（ptp4l/phc2sys）で
+OSのシステムクロックを同期する方式に変更、本システムはPTPのClient専用）を
+受けての実装。**今回はステージ1（監視のみ、システムクロックには一切触れない）
+のみを実施済み。** ステージ2（phc2sysによる実際のシステムクロック反映、
+systemd-timesyncdの無効化）は、実機でのステージ1確認結果を受けてから
+別途着手する（安全のため意図的に分離。詳細はNOTES.md）。
+
+実装内容:
+
+- **linuxptp導入**: `scripts/setup.sh`に`linuxptp`・`ethtool`パッケージの
+  インストールを追加。新規systemdユニット`multiviewer-ptp.service`を追加
+  （`Restart=on-failure`）。ptp4lサブプロセスの起動とPTP状態収集ループを
+  同一ユニット内の単一Pythonプロセス（`app/ptp_main.py`）で行う設計とした
+  理由はNOTES.md参照
+- **ptp4l設定生成**（`app/ptp/config_gen.py`）: `config.json`の`ptp.domain`
+  （デフォルトを要件⑥-4-2に合わせて127に変更）と対象NIC
+  （`network.media_amber.interface`、ステップ3aはAmber片系のみ）を反映した
+  設定ファイルを、起動のたびにゼロから生成する。ST2059-2プロファイルの
+  各インターバル値の出典はNOTES.md参照
+- **`clientOnly 1`のソースコードレベル固定**（要件4.3.5・9.3.3、絶対要件）:
+  `config.json`にもWebGUIにもこの値を変更できる経路を一切作っていない。
+  生成直後の自己検証、`app/ptp_main.py`起動時のファイル再検証（検証失敗時は
+  ptp4lを起動せず終了）、ユニットテストの3重の防御を実装。詳細はNOTES.md
+- **HW/SWタイムスタンプの自動判別**（`app/ptp/timestamping.py`）:
+  `ethtool -T <iface>`の`SOF_TIMESTAMPING_TX/RX_HARDWARE`フラグの有無で
+  自動的に切り替え、ログとダッシュボードの両方に表示する
+- **PTP状態収集**（`app/ptp/pmc_client.py`, `app/ptp/monitor.py`）: `pmc`で
+  `TIME_STATUS_NP`（offset・GM有無・GM-ID）と`PORT_DATA_SET`（ポート状態）を
+  1秒周期で取得。直近60サンプルのローリングウィンドウでoffsetの母標準偏差を
+  ジッター指標として算出し、状態ファイル（`ptp-status.json`、
+  `nmos-status.json`と同じMULTIVIEWER_CONFIG_DIR経由のプロセス間受け渡し
+  パターン）に保存する。系統切替・ロック状態変化はログに記録する（要件
+  5-3-1）
+- **ダッシュボード表示**（`webgui/app/routers/dashboard.py`、
+  `dashboard.html`/`dashboard.js`）: `ptp_lock_state: "not_implemented"`の
+  固定表示を、実データに基づく「正常/同期中/GM未検出/異常/不明」の5値判定に
+  置き換えた。ジッター閾値はタイムスタンプモードごとに異なる値
+  （ハードウェア1µs／ソフトウェア1ms）を使用（要件⑤-1-4、根拠はNOTES.md）。
+  状態ファイルが5秒以上更新されていない場合は「不明」を表示し、古い状態を
+  「正常」のまま表示し続けることを防ぐ。GM-ID・ドメイン設定値・offset実測値・
+  ジッター実測値・タイムスタンプモード・ポート状態・使用インターフェースも
+  併せて表示する
+- **将来の2系統対応**: 状態ファイルのスキーマ・ダッシュボードAPIレスポンスは
+  最初から`legs.amber`/`legs.blue`のキーで系統ごとに分けてあり、ステップ3b
+  （Blue系統＋BMCAによる冗長切替）はBlue用の監視インスタンスを追加するだけで
+  よい設計にしてある（詳細はNOTES.md）
+
+やらないこと（後続ステップ）:
+
+- ステージ2: phc2sysによるシステムクロックへの実反映、systemd-timesyncdの
+  無効化判断（ステージ1の実機確認後に着手）
+- Blue系統を含む2ポート構成とBMCAによる冗長切替（ステップ3b）
+- MTLによるST2110受信、映像合成、WebRTC配信（ステップ4/5）
+
+**実機検証について**: 本実装はWindows開発機で作成しており、`ptp4l`・`pmc`・
+`ethtool`の実バイナリを使った統合動作確認は行っていない（ユニットテストは
+すべて`subprocess`呼び出しをモック化）。以下は実機（Ubuntu Server +
+実際のPTPグランドマスター環境）での確認が必須:
+
+- ptp4lが実際に起動し、グランドマスターを検出してSLAVE状態に遷移すること
+- offsetが収束し、ジッターが「正常」判定の閾値内に収まること（閾値自体の
+  妥当性の検証を含む）
+- ダッシュボードにこれらの実測値が正しく反映されること
+- ハードウェアタイムスタンプ対応NIC・非対応NICそれぞれでの動作
+
 ## ディレクトリ構成
 
 ```
@@ -192,6 +259,14 @@ webgui/            FastAPI製WebGUI本体・NMOSサービス本体（同一Pytho
     routers/            WebGUI各画面・APIのFastAPIルータ
     templates/, static/ Jinja2テンプレートとCSS/JS
     nmos_main.py         NMOSサービスのエントリポイント（uvicorn起動）
+    ptp_main.py           PTPサービスのエントリポイント（ptp4l起動＋状態監視ループ、ステップ3a）
+    ptp/
+      config_gen.py         ptp4l.conf生成（clientOnly 1をハードコード）
+      timestamping.py       ethtool -TによるHW/SWタイムスタンプ判別
+      pmc_client.py          pmcコマンドのラッパー・出力パーサー
+      judgement.py           状態判定ロジック（正常/同期中/GM未検出/異常/不明・ジッター閾値）
+      monitor.py              1秒周期のpmcポーリングループ
+      status_store.py        PTP状態をWebGUIプロセスへ橋渡しする状態ファイル
     nmos/
       identity.py         Node/Device/Receiverの安定UUID管理
       resources.py         IS-04リソースJSON（Node/Device/Receiver）組み立て
@@ -601,7 +676,7 @@ pytest -q
 本番環境（`setup.sh`）には`requirements.txt`のみをインストールし、テスト依存は
 インストールしない）
 
-138件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
+186件のユニット・API・結合テストで、設定ストア・ログストア・NIC変更ロジック・
 WebGUIの各画面とAPI・NMOS（IS-04リソース生成/Registrationクライアント/Node API/
 IS-05 Connection API/IS-07・IS-08スタブ/自作モックRDSとの結合テスト/mDNS発見の
 パース・優先度選択・フェイルオーバー・`auto`モード統合ロジック/`staged`キャッシュ
@@ -609,7 +684,11 @@ IS-05 Connection API/IS-07・IS-08スタブ/自作モックRDSとの結合テス
 NMOS activate時にSDPの実値（interlace・ptime）が反映される回帰テスト/
 手動保存APIが「SDP」を拒否することの確認/subscriptionの動的化・設定変更検知に
 よるRDSへの再登録の回帰テスト/`multiprocessing`による2プロセス同時書き込みで
-config.jsonのlost updateが発生しないことの回帰テスト）を検証している。
+config.jsonのlost updateが発生しないことの回帰テスト/PTP設定生成の
+`clientOnly 1`固定・pmc出力パース・状態判定ロジック・ジッター閾値切り替え・
+状態ファイル陳腐化判定）を検証している。**PTP関連テストは`ptp4l`/`pmc`/
+`ethtool`の呼び出しをすべてモック化したユニットテストであり、実機での統合
+動作確認は別途必要**（詳細は「ステップ3aのスコープ」参照）。
 UIのブラウザでの目視確認は `uvicorn app.main:app` をローカルで起動して行った
 （Windows開発機のため `ip`/`netplan`/`psutil` 等OS依存機能は自動的にNo-op/N-A表示に
 フォールバックする設計）。
