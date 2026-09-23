@@ -144,6 +144,18 @@ h2 { font-size: 1rem; margin: 0 0 0.6rem; color: var(--text-dim); text-transform
 .status-table td, .status-table th { padding: 0.35rem 0.4rem; border-bottom: 1px solid var(--border); text-align: left; }
 .status-table th { color: var(--text-dim); font-weight: 500; }
 
+/* Dashboard's right-hand pane (Receiver受信状態/PTP同期状態/システム状態):
+   text ~10% smaller than the site default so all three status tables fit
+   on one screen without pane-internal scrolling. font-size on the panel
+   itself covers .panel-title (which has no font-size of its own, so it
+   inherits the reduced size); .status-table/.help-text set their own
+   rem-based sizes elsewhere, so they need their own (also ~10% smaller)
+   overrides here rather than inheriting. */
+.panel-dense { font-size: 0.9rem; }
+.panel-dense .status-table { font-size: 0.77rem; }
+.panel-dense .status-table td, .panel-dense .status-table th { padding: 0.3rem 0.35rem; }
+.panel-dense .help-text { font-size: 0.68rem; }
+
 .led {
   display: inline-block;
   width: 10px;
