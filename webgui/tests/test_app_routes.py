@@ -48,7 +48,12 @@ def test_dashboard_status_api(client):
     body = response.json()
     assert len(body["video_receivers"]) == 4
     assert len(body["audio_receivers"]) == 1
-    assert body["ptp_lock_state"] == "not_implemented"
+    # No PTP monitor has ever run against this fresh config dir, so both
+    # legs must report "unknown" (requirement: never show a stale/missing
+    # status as "正常") rather than crashing or silently defaulting to ok.
+    assert body["ptp"]["domain"] == 127
+    assert body["ptp"]["legs"]["amber"]["state"] == "unknown"
+    assert body["ptp"]["legs"]["blue"]["state"] == "unknown"
 
 
 def test_media_page_renders(client):

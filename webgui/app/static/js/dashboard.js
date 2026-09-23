@@ -2,6 +2,52 @@ function ledClass(receiver) {
   return receiver.enabled ? "led on" : "led";
 }
 
+const PTP_STATE_LABELS = {
+  normal: "正常",
+  syncing: "同期中",
+  gm_not_found: "GM未検出",
+  abnormal: "異常",
+  unknown: "不明",
+};
+
+// ok/warn/err badge coloring per state -- "unknown" and "syncing" both
+// read as a plain neutral badge (no color class) since neither is a
+// fault, just "nothing conclusive to report yet".
+const PTP_STATE_BADGE_CLASS = {
+  normal: "ok",
+  gm_not_found: "warn",
+  abnormal: "err",
+};
+
+function formatNs(ns) {
+  if (ns === null || ns === undefined) return "-";
+  return `${ns.toFixed ? ns.toFixed(0) : ns} ns`;
+}
+
+function formatJitter(ns) {
+  if (ns === null || ns === undefined) return "-";
+  return `${ns.toFixed(1)} ns (stdev)`;
+}
+
+const TS_MODE_LABELS = { hardware: "ハードウェア", software: "ソフトウェア" };
+
+function updatePtpPanel(ptp) {
+  const amber = (ptp && ptp.legs && ptp.legs.amber) || {};
+  const state = amber.state || "unknown";
+
+  const badge = document.getElementById("ptp-lock-badge");
+  badge.textContent = PTP_STATE_LABELS[state] || state;
+  badge.className = "state-badge" + (PTP_STATE_BADGE_CLASS[state] ? " " + PTP_STATE_BADGE_CLASS[state] : "");
+
+  document.getElementById("ptp-domain").textContent = ptp && ptp.domain !== null && ptp.domain !== undefined ? ptp.domain : "-";
+  document.getElementById("ptp-amber-gmid").textContent = amber.gm_present ? amber.gm_id || "-" : "-";
+  document.getElementById("ptp-amber-offset").textContent = formatNs(amber.offset_ns);
+  document.getElementById("ptp-amber-jitter").textContent = formatJitter(amber.jitter_ns);
+  document.getElementById("ptp-amber-tsmode").textContent = TS_MODE_LABELS[amber.timestamping_mode] || "-";
+  document.getElementById("ptp-amber-portstate").textContent = amber.port_state || "-";
+  document.getElementById("ptp-amber-iface").textContent = amber.interface || "(未設定)";
+}
+
 async function refreshDashboard() {
   const res = await fetch("/api/dashboard/status");
   if (!res.ok) return;
@@ -19,6 +65,8 @@ async function refreshDashboard() {
   document.getElementById("nic-control").textContent = nicText(data.nics.control);
   document.getElementById("nic-amber").textContent = nicText(data.nics.media_amber);
   document.getElementById("nic-blue").textContent = nicText(data.nics.media_blue);
+
+  updatePtpPanel(data.ptp);
 
   const nmosLabels = {
     disabled: "無効（未設定）",

@@ -157,6 +157,20 @@ h2 { font-size: 1rem; margin: 0 0 0.6rem; color: var(--text-dim); text-transform
 .led.warn { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
 .led.err { background: var(--err); box-shadow: 0 0 6px var(--err); }
 
+/* PTP lock state badge (dashboard, 正常/同期中/GM未検出/異常/不明) */
+.state-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--bg-input);
+  color: var(--text-dim);
+}
+.state-badge.ok { background: rgba(63, 185, 80, 0.15); color: var(--ok); }
+.state-badge.warn { background: rgba(210, 153, 34, 0.15); color: var(--warn); }
+.state-badge.err { background: rgba(229, 83, 75, 0.15); color: var(--err); }
+
 /* Dense grid for media settings */
 .receiver-grid {
   display: grid;

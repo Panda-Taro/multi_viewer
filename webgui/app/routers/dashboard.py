@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 from .. import config_store, log_store, nic_state, system_stats
 from ..nmos import status_store as nmos_status_store
+from ..ptp import judgement as ptp_judgement
+from ..ptp import status_store as ptp_status_store
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
@@ -51,6 +53,21 @@ def dashboard_status():
         for idx, r in enumerate(config["receivers"]["audio"])
     ]
 
+    ptp_raw = ptp_status_store.read_status()
+    ptp_legs = ptp_raw.get("legs", {})
+    ptp_view = {
+        # Requirement 6-3: this is config.json's *configured* domain, not
+        # necessarily whatever ptp4l happens to be currently running with
+        # (e.g. right after a WebGUI change but before the service picks
+        # it up on its next restart).
+        "domain": config["ptp"]["domain"],
+        "active_leg": ptp_raw.get("active_leg"),
+        "legs": {
+            "amber": ptp_judgement.effective_leg_view(ptp_legs.get("amber")),
+            "blue": ptp_judgement.effective_leg_view(ptp_legs.get("blue")),
+        },
+    }
+
     return {
         "nics": {
             "media_amber": nic_summary(config["network"]["media_amber"]),
@@ -61,10 +78,7 @@ def dashboard_status():
         "memory_percent": system_stats.memory_percent(),
         "video_receivers": video_leds,
         "audio_receivers": audio_leds,
-        # PTP lock state is reported by the PTP client implemented in a
-        # later step; step 1 exposes the field as "not_implemented" so the
-        # dashboard layout and polling logic do not need to change later.
-        "ptp_lock_state": "not_implemented",
+        "ptp": ptp_view,
         "display_mode": config["display"]["mode"],
         "single_source": config["display"]["single_source"],
         "viewer_url_path": config["streaming"]["url_path"],

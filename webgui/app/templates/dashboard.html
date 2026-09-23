@@ -40,12 +40,27 @@
       <tr><th>項目</th><th>値</th></tr>
       <tr><td>CPU使用率</td><td id="cpu-percent">-</td></tr>
       <tr><td>メモリ使用率</td><td id="mem-percent">-</td></tr>
-      <tr><td>PTPロック状態</td><td id="ptp-lock">未実装（後続ステップ）</td></tr>
+      <tr><td>PTPロック状態</td><td id="ptp-lock"><span class="state-badge" id="ptp-lock-badge">-</span></td></tr>
       <tr><td>NMOS登録状態</td><td id="nmos-status">-</td></tr>
       <tr><td>制御NIC (1G)</td><td id="nic-control">-</td></tr>
       <tr><td>メディアNIC Amber (10G)</td><td id="nic-amber">-</td></tr>
       <tr><td>メディアNIC Blue (10G)</td><td id="nic-blue">-</td></tr>
     </table>
+
+    <div class="panel-title" style="margin-top:1rem">PTP同期状態（Amber系統）</div>
+    <table class="status-table">
+      <tr><th>項目</th><th>値</th></tr>
+      <tr><td>ドメイン</td><td id="ptp-domain">-</td></tr>
+      <tr><td>グランドマスターID</td><td id="ptp-amber-gmid">-</td></tr>
+      <tr><td>Offset from Master</td><td id="ptp-amber-offset">-</td></tr>
+      <tr><td>ジッター</td><td id="ptp-amber-jitter">-</td></tr>
+      <tr><td>タイムスタンプモード</td><td id="ptp-amber-tsmode">-</td></tr>
+      <tr><td>ポート状態</td><td id="ptp-amber-portstate">-</td></tr>
+      <tr><td>インターフェース</td><td id="ptp-amber-iface">-</td></tr>
+    </table>
+    <p class="help-text">
+      B系統（Blue）はステップ3bで追加されます。現時点ではA系統（Amber）のみ監視しています。
+    </p>
 
     <div class="panel-title" style="margin-top:1rem">Receiver受信状態</div>
     <table class="status-table">
